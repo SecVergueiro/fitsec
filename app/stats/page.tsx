@@ -3,8 +3,7 @@
 import { useEffect, useState } from "react";
 import Link from "next/link";
 import { supabase } from "@/lib/supabase";
-import { Card, Eyebrow, PageHeader, Pill } from "@/components/ui";
-import { Spinner } from "@/components/Button";
+import { Card, Eyebrow, PageHeader } from "@/components/ui";
 import { fmtKg, fmtRelativeDate, MUSCLE_LABELS } from "@/lib/utils";
 import type { Exercise, PersonalRecord } from "@/lib/database.types";
 
@@ -14,40 +13,92 @@ interface ExerciseWithStats {
   pr?: PersonalRecord;
 }
 
+type TimeFilter = "all" | "month" | "block";
+
+interface MuscleVolume {
+  muscle: string;
+  volume: number;
+  pct: number;
+}
+
 export default function StatsPage() {
-  const [data, setData] = useState<ExerciseWithStats[]>([]);
   const [loading, setLoading] = useState(true);
-  const [search, setSearch] = useState("");
+  const [timeFilter, setTimeFilter] = useState<TimeFilter>("all");
+  const [activeMesoStart, setActiveMesoStart] = useState<string | null>(null);
+  const [rawSets, setRawSets] = useState<any[]>([]);
+  const [rawExercises, setRawExercises] = useState<Exercise[]>([]);
+
+  const [data, setData] = useState<ExerciseWithStats[]>([]);
   const [recentPRs, setRecentPRs] = useState<PersonalRecord[]>([]);
-  const [totalSessions, setTotalSessions] = useState(0);
   const [totalVolume, setTotalVolume] = useState(0);
+  const [muscleVolumes, setMuscleVolumes] = useState<MuscleVolume[]>([]);
+  const [search, setSearch] = useState("");
 
   useEffect(() => {
     load();
   }, []);
 
+  useEffect(() => {
+    if (rawSets.length > 0 || rawExercises.length > 0) {
+      computeStats(rawSets, rawExercises, timeFilter, activeMesoStart);
+    }
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [rawSets, rawExercises, timeFilter, activeMesoStart]);
+
   async function load() {
     setLoading(true);
 
-    const [setsRes, exRes, sessRes] = await Promise.all([
-      supabase.from("session_sets").select("exercise_id, weight_kg, reps, performed_at, is_warmup"),
+    const [setsRes, exRes, mesoRes] = await Promise.all([
+      supabase
+        .from("session_sets")
+        .select("exercise_id, weight_kg, reps, performed_at, is_warmup"),
       supabase.from("exercises").select("*"),
-      supabase.from("workout_sessions").select("*", { count: "exact", head: true }).not("completed_at", "is", null),
+      supabase
+        .from("mesocycles")
+        .select("start_date")
+        .eq("is_active", true)
+        .limit(1)
+        .maybeSingle(),
     ]);
 
     const allSets = (setsRes.data as any[]) ?? [];
     const allExercises = (exRes.data as Exercise[]) ?? [];
 
-    setTotalSessions(sessRes.count ?? 0);
+    setRawSets(allSets);
+    setRawExercises(allExercises);
+    if (mesoRes.data) setActiveMesoStart((mesoRes.data as any).start_date);
 
-    // Volume total (excluindo warmups)
-    const totalVol = allSets.filter((s) => !s.is_warmup).reduce((sum, s) => sum + s.weight_kg * s.reps, 0);
+    setLoading(false);
+  }
+
+  function computeStats(
+    allSets: any[],
+    allExercises: Exercise[],
+    filter: TimeFilter,
+    mesoStart: string | null
+  ) {
+    const now = new Date();
+    const filteredSets = allSets.filter((s) => {
+      const d = s.performed_at.slice(0, 10);
+      if (filter === "month") {
+        const monthStart = new Date(now.getFullYear(), now.getMonth(), 1)
+          .toISOString()
+          .slice(0, 10);
+        return d >= monthStart;
+      }
+      if (filter === "block" && mesoStart) {
+        return d >= mesoStart.slice(0, 10);
+      }
+      return true;
+    });
+
+    const workingSets = filteredSets.filter((s) => !s.is_warmup);
+    const totalVol = workingSets.reduce((sum: number, s: any) => sum + s.weight_kg * s.reps, 0);
     setTotalVolume(totalVol);
 
-    // Agrupa por exercicio
+    // Agrupa por exercício
     const byExercise: Record<string, any[]> = {};
-    allSets.forEach((s) => {
-      if (s.is_warmup) return;
+    workingSets.forEach((s: any) => {
       if (!byExercise[s.exercise_id]) byExercise[s.exercise_id] = [];
       byExercise[s.exercise_id].push(s);
     });
@@ -56,9 +107,8 @@ export default function StatsPage() {
       .filter((e) => byExercise[e.id]?.length > 0)
       .map((e) => {
         const sets = byExercise[e.id];
-        // Calcula PR (melhor e1RM)
         let bestPR: any = null;
-        sets.forEach((s) => {
+        sets.forEach((s: any) => {
           const e1 = s.weight_kg * (1 + s.reps / 30);
           if (!bestPR || e1 > bestPR.e1rm) {
             bestPR = {
@@ -77,36 +127,74 @@ export default function StatsPage() {
 
     setData(stats);
 
-    // PRs recentes (últimas 7 PRs nominais)
     const recent = stats
       .map((s) => s.pr)
       .filter(Boolean)
-      .sort((a, b) => new Date(b!.performed_at).getTime() - new Date(a!.performed_at).getTime())
+      .sort(
+        (a, b) =>
+          new Date(b!.performed_at).getTime() - new Date(a!.performed_at).getTime()
+      )
       .slice(0, 5) as PersonalRecord[];
     setRecentPRs(recent);
 
-    setLoading(false);
+    // Volume por músculo
+    const byMuscle: Record<string, number> = {};
+    workingSets.forEach((s: any) => {
+      const ex = allExercises.find((e) => e.id === s.exercise_id);
+      if (!ex) return;
+      byMuscle[ex.primary_muscle] =
+        (byMuscle[ex.primary_muscle] ?? 0) + s.weight_kg * s.reps;
+    });
+    const maxVol = Math.max(...Object.values(byMuscle), 1);
+    const muscles: MuscleVolume[] = Object.entries(byMuscle)
+      .map(([muscle, vol]) => ({ muscle, volume: vol, pct: (vol / maxVol) * 100 }))
+      .sort((a, b) => b.volume - a.volume)
+      .slice(0, 6);
+    setMuscleVolumes(muscles);
   }
 
   const filtered = search.trim()
-    ? data.filter((d) => d.exercise.name.toLowerCase().includes(search.toLowerCase()))
+    ? data.filter((d) =>
+        d.exercise.name.toLowerCase().includes(search.toLowerCase())
+      )
     : data;
+
+  const hasBlock = activeMesoStart !== null;
 
   return (
     <div className="fade-in">
       <PageHeader eyebrow="Progressão" title="Stats" />
 
+      {/* Filtro temporal */}
+      <div className="flex gap-2 mb-4 flex-wrap">
+        {(["all", "month", ...(hasBlock ? ["block"] : [])] as TimeFilter[]).map((f) => (
+          <button
+            key={f}
+            onClick={() => setTimeFilter(f)}
+            className="px-3 py-1.5 rounded-full text-xs font-bold"
+            style={{
+              background: timeFilter === f ? "var(--primary)" : "var(--surface)",
+              color: timeFilter === f ? "var(--background)" : "var(--muted)",
+              border: `0.5px solid ${timeFilter === f ? "var(--primary)" : "var(--border)"}`,
+              minHeight: "auto",
+            }}
+          >
+            {f === "all" ? "Tudo" : f === "month" ? "Este mês" : "Este bloco"}
+          </button>
+        ))}
+      </div>
+
       {loading ? (
-        <div className="flex justify-center py-10">
-          <Spinner />
-        </div>
+        <StatsSkeleton />
       ) : data.length === 0 ? (
         <Card variant="ghost" className="text-center py-8">
           <div className="font-bold mb-1" style={{ color: "var(--primary)" }}>
-            Sem dados ainda
+            Sem dados{timeFilter !== "all" ? " no período" : ""}
           </div>
           <div className="text-sm" style={{ color: "var(--muted)" }}>
-            Registre algumas sessões pra ver tua progressão
+            {timeFilter === "all"
+              ? "Registre algumas sessões pra ver tua progressão"
+              : "Nenhum dado para o período selecionado"}
           </div>
         </Card>
       ) : (
@@ -115,21 +203,57 @@ export default function StatsPage() {
           <div className="grid grid-cols-2 gap-2 mb-5">
             <Card className="!p-3">
               <div className="text-xs" style={{ color: "var(--muted)" }}>
-                Total sessões
+                Exercícios
               </div>
-              <div className="text-2xl font-bold tabular mt-0.5">{totalSessions}</div>
+              <div className="text-2xl font-bold tabular mt-0.5">{data.length}</div>
             </Card>
             <Card className="!p-3">
               <div className="text-xs" style={{ color: "var(--muted)" }}>
-                Tonelagem total
+                Volume total
               </div>
               <div className="text-2xl font-bold tabular mt-0.5">
-                {totalVolume >= 1000 ? `${(totalVolume / 1000).toFixed(1)}t` : `${Math.round(totalVolume)}kg`}
+                {totalVolume >= 1000
+                  ? `${(totalVolume / 1000).toFixed(1)}t`
+                  : `${Math.round(totalVolume)}kg`}
               </div>
             </Card>
           </div>
 
-          {/* PRs recentes */}
+          {/* Volume por músculo */}
+          {muscleVolumes.length > 0 && (
+            <>
+              <Eyebrow className="mb-2">Volume por músculo</Eyebrow>
+              <Card className="mb-5">
+                <div className="space-y-3">
+                  {muscleVolumes.map(({ muscle, volume, pct }) => (
+                    <div key={muscle}>
+                      <div className="flex justify-between text-xs mb-1.5">
+                        <span className="font-medium">
+                          {(MUSCLE_LABELS as Record<string, string>)[muscle] ?? muscle}
+                        </span>
+                        <span style={{ color: "var(--muted)" }}>
+                          {volume >= 1000
+                            ? `${(volume / 1000).toFixed(1)}t`
+                            : `${Math.round(volume)}kg`}
+                        </span>
+                      </div>
+                      <div
+                        className="h-1.5 rounded-full overflow-hidden"
+                        style={{ background: "var(--surface-strong)" }}
+                      >
+                        <div
+                          className="h-full rounded-full transition-all duration-500"
+                          style={{ width: `${pct}%`, background: "var(--primary)" }}
+                        />
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              </Card>
+            </>
+          )}
+
+          {/* Melhores PRs */}
           {recentPRs.length > 0 && (
             <>
               <Eyebrow className="mb-2">Melhores PRs</Eyebrow>
@@ -139,16 +263,23 @@ export default function StatsPage() {
                     <div
                       className="px-4 py-3 flex justify-between items-center"
                       style={{
-                        borderBottom: idx < recentPRs.length - 1 ? "0.5px solid var(--border)" : "none",
+                        borderBottom:
+                          idx < recentPRs.length - 1
+                            ? "0.5px solid var(--border)"
+                            : "none",
                       }}
                     >
                       <div>
                         <div className="text-sm font-medium">{pr.exercise_name}</div>
                         <div className="text-xs" style={{ color: "var(--muted)" }}>
-                          {fmtRelativeDate(pr.performed_at)} · {fmtKg(pr.weight_kg)}kg × {pr.reps}
+                          {fmtRelativeDate(pr.performed_at)} · {fmtKg(pr.weight_kg)}kg ×{" "}
+                          {pr.reps}
                         </div>
                       </div>
-                      <div className="text-sm font-bold tabular" style={{ color: "var(--accent)" }}>
+                      <div
+                        className="text-sm font-bold tabular"
+                        style={{ color: "var(--accent)" }}
+                      >
                         {fmtKg(pr.e1rm)}
                       </div>
                     </div>
@@ -158,7 +289,7 @@ export default function StatsPage() {
             </>
           )}
 
-          {/* Lista de exercicios */}
+          {/* Lista de exercícios */}
           <Eyebrow className="mb-2">Por exercício</Eyebrow>
           <input
             type="text"
@@ -180,17 +311,24 @@ export default function StatsPage() {
                 <Card className="!p-3 mb-2">
                   <div className="flex justify-between items-center">
                     <div className="flex-1 min-w-0">
-                      <div className="font-medium text-sm truncate">{s.exercise.name}</div>
+                      <div className="font-medium text-sm truncate">
+                        {s.exercise.name}
+                      </div>
                       <div className="text-xs mt-0.5" style={{ color: "var(--muted)" }}>
-                        {MUSCLE_LABELS[s.exercise.primary_muscle]} · {s.setsCount} séries
+                        {(MUSCLE_LABELS as Record<string, string>)[
+                          s.exercise.primary_muscle
+                        ]} · {s.setsCount} séries
                       </div>
                     </div>
                     {s.pr && (
-                      <div className="text-right">
+                      <div className="text-right flex-shrink-0 ml-2">
                         <div className="text-xs" style={{ color: "var(--muted)" }}>
                           e1RM
                         </div>
-                        <div className="text-sm font-bold tabular" style={{ color: "var(--accent)" }}>
+                        <div
+                          className="text-sm font-bold tabular"
+                          style={{ color: "var(--accent)" }}
+                        >
                           {fmtKg(s.pr.e1rm)}
                         </div>
                       </div>
@@ -203,5 +341,62 @@ export default function StatsPage() {
         </>
       )}
     </div>
+  );
+}
+
+// ─── Skeleton ───────────────────────────────────────────────────────────────
+
+function StatsSkeleton() {
+  return (
+    <>
+      <div className="grid grid-cols-2 gap-2 mb-5">
+        <Card className="!p-3 h-20 animate-pulse">{" "}</Card>
+        <Card className="!p-3 h-20 animate-pulse">{" "}</Card>
+      </div>
+      <Card className="mb-5">
+        <div className="space-y-3">
+          {[1, 2, 3, 4].map((i) => (
+            <div key={i}>
+              <div className="flex justify-between mb-1.5">
+                <div
+                  className="h-3 w-24 rounded animate-pulse"
+                  style={{ background: "var(--surface-strong)" }}
+                />
+                <div
+                  className="h-3 w-12 rounded animate-pulse"
+                  style={{ background: "var(--surface-strong)" }}
+                />
+              </div>
+              <div
+                className="h-1.5 rounded-full animate-pulse"
+                style={{ background: "var(--surface-strong)" }}
+              />
+            </div>
+          ))}
+        </div>
+      </Card>
+      <div className="space-y-2">
+        {[1, 2, 3, 4, 5].map((i) => (
+          <Card key={i} className="!p-3 mb-2">
+            <div className="flex justify-between items-center">
+              <div>
+                <div
+                  className="h-3 w-36 rounded animate-pulse mb-1.5"
+                  style={{ background: "var(--surface-strong)" }}
+                />
+                <div
+                  className="h-2 w-24 rounded animate-pulse"
+                  style={{ background: "var(--surface)" }}
+                />
+              </div>
+              <div
+                className="h-4 w-12 rounded animate-pulse"
+                style={{ background: "var(--surface-strong)" }}
+              />
+            </div>
+          </Card>
+        ))}
+      </div>
+    </>
   );
 }

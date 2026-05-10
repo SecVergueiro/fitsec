@@ -1,4 +1,4 @@
-@import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;700&display=swap');
+@import url('https://fonts.googleapis.com/css2?family=Barlow+Condensed:wght@700;800&family=Inter:wght@400;500;700&display=swap');
 
 @tailwind base;
 @tailwind components;
@@ -83,12 +83,12 @@ button, a[role="button"] {
   min-height: 44px;
 }
 
-/* Animacao de fade-in suave em elementos novos */
+/* Animacao de entrada — fade + slide horizontal simula navegacao nativa mobile */
 @keyframes fadeIn {
-  from { opacity: 0; transform: translateY(4px); }
-  to { opacity: 1; transform: translateY(0); }
+  from { opacity: 0; transform: translateX(24px); }
+  to   { opacity: 1; transform: translateX(0); }
 }
 
 .fade-in {
-  animation: fadeIn 0.2s ease-out;
+  animation: fadeIn 0.22s cubic-bezier(0.25, 0.46, 0.45, 0.94);
 }

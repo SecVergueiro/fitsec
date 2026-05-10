@@ -5,7 +5,8 @@ import Link from "next/link";
 import { useParams, useRouter } from "next/navigation";
 import { supabase } from "@/lib/supabase";
 import { Card, Eyebrow, Pill } from "@/components/ui";
-import { Button, Input, Spinner } from "@/components/Button";
+import { Button, EmptyState, Input, Spinner } from "@/components/Button";
+import { useConfirm } from "@/components/Toast";
 import { ExerciseItem } from "@/components/ExerciseItem";
 import { WEEKDAY_LABELS } from "@/lib/utils";
 import type { Exercise, TemplateDay, TemplateExercise } from "@/lib/database.types";
@@ -19,6 +20,7 @@ export default function DiaDetailPage() {
   const router = useRouter();
   const templateId = params.id as string;
   const dayId = params.dayId as string;
+  const confirm = useConfirm();
 
   const [day, setDay] = useState<TemplateDay | null>(null);
   const [exercises, setExercises] = useState<ExerciseWithDetails[]>([]);
@@ -46,13 +48,24 @@ export default function DiaDetailPage() {
   }
 
   async function deleteExercise(id: string) {
-    if (!confirm("Remover esse exercício?")) return;
+    const ok = await confirm({
+      title: "Remover exercício?",
+      confirmLabel: "Remover",
+      danger: true,
+    });
+    if (!ok) return;
     await supabase.from("template_exercises").delete().eq("id", id);
     loadData();
   }
 
   async function deleteDay() {
-    if (!confirm("Excluir esse dia inteiro?")) return;
+    const ok = await confirm({
+      title: "Excluir esse dia?",
+      message: "Todos os exercícios do dia serão removidos.",
+      confirmLabel: "Excluir",
+      danger: true,
+    });
+    if (!ok) return;
     await supabase.from("template_days").delete().eq("id", dayId);
     router.push(`/treinos/template/${templateId}`);
   }
@@ -65,7 +78,30 @@ export default function DiaDetailPage() {
     );
   }
 
-  if (!day) return <div>Dia não encontrado</div>;
+  if (!day) {
+    return (
+      <div className="fade-in">
+        <Link
+          href={`/treinos/template/${templateId}`}
+          className="text-xs font-medium block mb-4"
+          style={{ color: "var(--muted)", minHeight: "auto" }}
+        >
+          ← Template
+        </Link>
+        <EmptyState
+          title="Dia não encontrado"
+          description="Esse dia de treino não existe ou foi removido."
+          action={
+            <Link href={`/treinos/template/${templateId}`}>
+              <Button size="sm" variant="secondary">
+                Voltar para o template
+              </Button>
+            </Link>
+          }
+        />
+      </div>
+    );
+  }
 
   return (
     <div className="fade-in">

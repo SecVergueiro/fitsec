@@ -5,7 +5,8 @@ import Link from "next/link";
 import { useParams, useRouter } from "next/navigation";
 import { supabase } from "@/lib/supabase";
 import { Card, Eyebrow, Pill } from "@/components/ui";
-import { Button, Spinner } from "@/components/Button";
+import { Button, EmptyState, Spinner } from "@/components/Button";
+import { useToast, useConfirm } from "@/components/Toast";
 import { fmtTimer, estimate1RM, fmtKg } from "@/lib/utils";
 import type { Exercise, SessionExercise, SessionSet, WorkoutSession } from "@/lib/database.types";
 import { AddExerciseToSessionModal } from "./AddExerciseModal";
@@ -14,12 +15,15 @@ interface ExerciseWithSets extends SessionExercise {
   exercise: Exercise;
   sets: SessionSet[];
   prevBest?: { weight: number; reps: number; e1rm: number };
+  prevSession?: { sets: { weight_kg: number; reps: number; rir: number | null }[]; maxWeight: number };
 }
 
 export default function SessaoAtivaPage() {
   const params = useParams();
   const router = useRouter();
   const sessionId = params.id as string;
+  const toast = useToast();
+  const confirm = useConfirm();
 
   const [session, setSession] = useState<WorkoutSession | null>(null);
   const [exercises, setExercises] = useState<ExerciseWithSets[]>([]);
@@ -27,7 +31,9 @@ export default function SessaoAtivaPage() {
   const [activeIdx, setActiveIdx] = useState(0);
   const [elapsed, setElapsed] = useState(0);
   const [restRemaining, setRestRemaining] = useState<number | null>(null);
+  const [restTotal, setRestTotal] = useState<number>(0);
   const [showAddExercise, setShowAddExercise] = useState(false);
+  const [showFinishModal, setShowFinishModal] = useState(false);
   const restRef = useRef<NodeJS.Timeout | null>(null);
   const elapsedRef = useRef<NodeJS.Timeout | null>(null);
 
@@ -66,7 +72,6 @@ export default function SessaoAtivaPage() {
       return;
     }
 
-    // Pra cada exercicio, busca series e melhor sessao anterior
     const enriched = await Promise.all(
       (exData as any[]).map(async (ex) => {
         const { data: sets } = await supabase
@@ -75,10 +80,9 @@ export default function SessaoAtivaPage() {
           .eq("session_exercise_id", ex.id)
           .order("set_number");
 
-        // Busca melhor e1RM anterior desse exercicio
         const { data: prevSets } = await supabase
           .from("session_sets")
-          .select("weight_kg, reps")
+          .select("weight_kg, reps, rir, session_id")
           .eq("exercise_id", ex.exercise_id)
           .eq("is_warmup", false)
           .neq("session_id", sessionId)
@@ -86,8 +90,13 @@ export default function SessaoAtivaPage() {
           .limit(50);
 
         let prevBest: any = undefined;
+        let prevSession: ExerciseWithSets["prevSession"] = undefined;
+
         if (prevSets && prevSets.length > 0) {
-          const best = (prevSets as any[]).reduce(
+          const all = prevSets as any[];
+
+          // Best e1RM across all history
+          const best = all.reduce(
             (acc, s) => {
               const e1 = estimate1RM(s.weight_kg, s.reps);
               return e1 > acc.e1rm ? { weight: s.weight_kg, reps: s.reps, e1rm: e1 } : acc;
@@ -95,22 +104,35 @@ export default function SessaoAtivaPage() {
             { weight: 0, reps: 0, e1rm: 0 }
           );
           if (best.e1rm > 0) prevBest = best;
+
+          // Last session's sets (first session_id in desc order, reversed to chronological)
+          const lastId = all[0].session_id;
+          const lastSets = all.filter((s) => s.session_id === lastId).reverse();
+          prevSession = {
+            sets: lastSets,
+            maxWeight: Math.max(...lastSets.map((s) => s.weight_kg)),
+          };
         }
 
-        return { ...ex, sets: (sets as SessionSet[]) ?? [], prevBest };
+        return { ...ex, sets: (sets as SessionSet[]) ?? [], prevBest, prevSession };
       })
     );
 
     setExercises(enriched);
 
-    // Define exercicio ativo (primeiro nao-completo)
     const firstIncomplete = enriched.findIndex((e) => !e.is_completed);
     setActiveIdx(firstIncomplete === -1 ? 0 : firstIncomplete);
 
     setLoading(false);
   }
 
-  async function addSet(exIdx: number, weight: number, reps: number, rir: number | null, isWarmup: boolean) {
+  async function addSet(
+    exIdx: number,
+    weight: number,
+    reps: number,
+    rir: number | null,
+    isWarmup: boolean
+  ): Promise<boolean> {
     const ex = exercises[exIdx];
     const setNumber = ex.sets.filter((s) => !s.is_warmup).length + (isWarmup ? 0 : 1);
 
@@ -130,31 +152,68 @@ export default function SessaoAtivaPage() {
       .single();
 
     if (error) {
-      alert("Erro ao salvar série: " + error.message);
-      return;
+      toast.error("Erro ao salvar série");
+      return false;
     }
 
-    // Atualiza estado local
+    // Detecção de PR — comparar e1RM da série nova com melhor histórico + melhor da sessão atual
+    if (!isWarmup) {
+      const new1RM = estimate1RM(weight, reps);
+      const historicalBest = ex.prevBest?.e1rm ?? 0;
+      const sessionBest = ex.sets
+        .filter((s) => !s.is_warmup)
+        .reduce((best, s) => Math.max(best, estimate1RM(s.weight_kg, s.reps)), 0);
+      const overallBest = Math.max(historicalBest, sessionBest);
+
+      if (new1RM > overallBest) {
+        toast.pr(`Novo PR — ${fmtKg(new1RM)} e1RM`);
+        if ("vibrate" in navigator) navigator.vibrate([100, 50, 200, 50, 300]);
+      }
+    }
+
     setExercises((prev) => {
       const next = [...prev];
       next[exIdx] = { ...next[exIdx], sets: [...next[exIdx].sets, data as SessionSet] };
       return next;
     });
 
-    // Inicia timer de descanso (se nao for warmup)
     if (!isWarmup && ex.rest_seconds) {
       startRestTimer(ex.rest_seconds);
     }
+
+    return true;
   }
 
-  async function deleteSet(exIdx: number, setId: string) {
-    if (!confirm("Excluir essa série?")) return;
-    await supabase.from("session_sets").delete().eq("id", setId);
+  function deleteSet(exIdx: number, setId: string) {
+    const removedSet = exercises[exIdx].sets.find((s) => s.id === setId);
     setExercises((prev) => {
       const next = [...prev];
       next[exIdx] = { ...next[exIdx], sets: next[exIdx].sets.filter((s) => s.id !== setId) };
       return next;
     });
+
+    let undone = false;
+    toast.undo("Série removida", () => {
+      undone = true;
+      if (removedSet) {
+        setExercises((prev) => {
+          const next = [...prev];
+          next[exIdx] = {
+            ...next[exIdx],
+            sets: [...next[exIdx].sets, removedSet].sort(
+              (a, b) => new Date(a.performed_at).getTime() - new Date(b.performed_at).getTime()
+            ),
+          };
+          return next;
+        });
+      }
+    });
+
+    setTimeout(async () => {
+      if (!undone) {
+        await supabase.from("session_sets").delete().eq("id", setId);
+      }
+    }, 4500);
   }
 
   async function toggleCompleted(exIdx: number) {
@@ -174,11 +233,11 @@ export default function SessaoAtivaPage() {
   function startRestTimer(seconds: number) {
     if (restRef.current) clearInterval(restRef.current);
     setRestRemaining(seconds);
+    setRestTotal(seconds);
     restRef.current = setInterval(() => {
       setRestRemaining((prev) => {
         if (prev === null || prev <= 1) {
           if (restRef.current) clearInterval(restRef.current);
-          // Vibra se suportado
           if ("vibrate" in navigator) navigator.vibrate([200, 100, 200]);
           return null;
         }
@@ -187,8 +246,8 @@ export default function SessaoAtivaPage() {
     }, 1000);
   }
 
-  async function finishSession() {
-    if (!confirm("Finalizar essa sessão?")) return;
+  async function handleFinish(energyLevel: number | null, sessionNotes: string) {
+    setShowFinishModal(false);
     const now = new Date().toISOString();
     const start = new Date(session!.started_at).getTime();
     const minutes = Math.floor((Date.now() - start) / 60000);
@@ -198,13 +257,23 @@ export default function SessaoAtivaPage() {
         completed_at: now,
         ended_at: now,
         duration_minutes: minutes,
+        energy_level: energyLevel,
+        notes: sessionNotes || null,
       } as any)
       .eq("id", sessionId);
-    router.push("/sessao");
+    if ("vibrate" in navigator) navigator.vibrate([100, 50, 100, 50, 300]);
+    router.push(`/sessao/${sessionId}/resumo`);
   }
 
   async function abandonSession() {
-    if (!confirm("Descartar essa sessão? Todas as séries registradas serão perdidas.")) return;
+    const ok = await confirm({
+      title: "Descartar sessão?",
+      message: "Todas as séries registradas serão perdidas.",
+      confirmLabel: "Descartar",
+      danger: true,
+    });
+    if (!ok) return;
+
     await supabase.from("workout_sessions").delete().eq("id", sessionId);
     router.push("/sessao");
   }
@@ -217,7 +286,30 @@ export default function SessaoAtivaPage() {
     );
   }
 
-  if (!session) return <div>Sessão não encontrada</div>;
+  if (!session) {
+    return (
+      <div className="fade-in">
+        <Link
+          href="/sessao"
+          className="text-xs font-medium block mb-4"
+          style={{ color: "var(--muted)", minHeight: "auto" }}
+        >
+          ← Sessão
+        </Link>
+        <EmptyState
+          title="Sessão não encontrada"
+          description="Essa sessão não existe ou já foi removida."
+          action={
+            <Link href="/sessao">
+              <Button size="sm" variant="secondary">
+                Voltar para treinos
+              </Button>
+            </Link>
+          }
+        />
+      </div>
+    );
+  }
 
   const isCompleted = !!session.completed_at;
   const activeEx = exercises[activeIdx];
@@ -225,9 +317,9 @@ export default function SessaoAtivaPage() {
 
   return (
     <div className="fade-in">
-      {/* Header sticky com cronometro */}
+      {/* Header sticky — contém cronômetro e timer de descanso (persiste ao rolar) */}
       <div
-        className="sticky -mx-5 px-5 py-3 mb-3 z-10"
+        className="sticky -mx-5 px-5 mb-3 z-10"
         style={{
           top: 0,
           background: "rgba(4, 6, 7, 0.92)",
@@ -235,17 +327,25 @@ export default function SessaoAtivaPage() {
           borderBottom: "0.5px solid var(--border)",
         }}
       >
-        <div className="flex justify-between items-center">
-          <Link href="/sessao" className="text-xs font-medium" style={{ color: "var(--muted)", minHeight: "auto" }}>
+        {/* Linha de navegação */}
+        <div className="flex justify-between items-center py-3">
+          <Link
+            href="/sessao"
+            className="text-xs font-medium"
+            style={{ color: "var(--muted)", minHeight: "auto" }}
+          >
             ← Sessão
           </Link>
           <div className="flex items-center gap-3">
-            <div className="text-sm font-bold tabular" style={{ color: isCompleted ? "var(--muted)" : "var(--accent)" }}>
+            <div
+              className="text-sm font-bold tabular"
+              style={{ color: isCompleted ? "var(--muted)" : "var(--accent)" }}
+            >
               {fmtTimer(elapsed)}
             </div>
             {!isCompleted && (
               <button
-                onClick={finishSession}
+                onClick={() => setShowFinishModal(true)}
                 className="text-xs font-bold px-3 py-1.5 rounded-md"
                 style={{ background: "var(--primary)", color: "var(--background)", minHeight: "auto" }}
               >
@@ -254,23 +354,59 @@ export default function SessaoAtivaPage() {
             )}
           </div>
         </div>
-      </div>
 
-      {/* Rest timer */}
-      {restRemaining !== null && (
-        <div
-          className="mb-3 px-4 py-3 rounded-lg flex justify-between items-center"
-          style={{ background: "var(--accent)", color: "var(--background)" }}
-        >
-          <span className="text-sm font-bold">Descansando...</span>
-          <div className="flex items-center gap-3">
-            <span className="text-2xl font-bold tabular">{fmtTimer(restRemaining)}</span>
-            <button onClick={() => setRestRemaining(null)} className="text-xs font-bold" style={{ minHeight: "auto" }}>
-              Pular
-            </button>
+        {/* Timer de descanso integrado ao sticky — sempre visível ao rolar */}
+        {restRemaining !== null && (
+          <div className="pb-3">
+            <div
+              className="rounded-lg px-3 py-2.5 flex items-center gap-3"
+              style={{
+                background: "rgba(68, 147, 224, 0.10)",
+                border: "0.5px solid rgba(68, 147, 224, 0.22)",
+              }}
+            >
+              <div className="flex-1 min-w-0">
+                <div
+                  className="text-xs font-bold mb-1.5"
+                  style={{ color: "var(--muted)", letterSpacing: "0.1em" }}
+                >
+                  DESCANSO
+                </div>
+                <div
+                  className="h-1 rounded-full overflow-hidden"
+                  style={{ background: "rgba(68, 147, 224, 0.15)" }}
+                >
+                  <div
+                    className="h-full rounded-full transition-all duration-1000 ease-linear"
+                    style={{
+                      background: "var(--accent)",
+                      width: `${restTotal > 0 ? (restRemaining / restTotal) * 100 : 0}%`,
+                    }}
+                  />
+                </div>
+              </div>
+              <span
+                className="text-2xl font-bold tabular flex-shrink-0"
+                style={{ color: "var(--accent)" }}
+              >
+                {fmtTimer(restRemaining)}
+              </span>
+              <button
+                onClick={() => setRestRemaining(null)}
+                className="text-xs font-medium flex-shrink-0 px-2.5 py-1.5 rounded-md"
+                style={{
+                  background: "rgba(68, 147, 224, 0.10)",
+                  color: "var(--accent)",
+                  border: "0.5px solid rgba(68, 147, 224, 0.2)",
+                  minHeight: "auto",
+                }}
+              >
+                Pular
+              </button>
+            </div>
           </div>
-        </div>
-      )}
+        )}
+      </div>
 
       {/* Progresso */}
       <div className="flex justify-between items-center mb-2">
@@ -306,7 +442,11 @@ export default function SessaoAtivaPage() {
       )}
 
       {!isCompleted && exercises.length > 0 && (
-        <Card variant="ghost" className="text-center cursor-pointer mb-3" onClick={() => setShowAddExercise(true)}>
+        <Card
+          variant="ghost"
+          className="text-center cursor-pointer mb-3"
+          onClick={() => setShowAddExercise(true)}
+        >
           <div className="font-bold" style={{ color: "var(--primary)" }}>
             + Adicionar exercício extra
           </div>
@@ -334,6 +474,13 @@ export default function SessaoAtivaPage() {
           }}
         />
       )}
+
+      {showFinishModal && (
+        <FinishSessionModal
+          onFinish={handleFinish}
+          onCancel={() => setShowFinishModal(false)}
+        />
+      )}
     </div>
   );
 }
@@ -356,15 +503,18 @@ function ExerciseCard({
   isCompleted: boolean;
   isReadOnly: boolean;
   onActivate: () => void;
-  onAddSet: (weight: number, reps: number, rir: number | null, isWarmup: boolean) => void;
+  onAddSet: (weight: number, reps: number, rir: number | null, isWarmup: boolean) => Promise<boolean>;
   onDeleteSet: (setId: string) => void;
   onToggleCompleted: () => void;
 }) {
+  const toast = useToast();
   const [weight, setWeight] = useState("");
   const [reps, setReps] = useState("");
   const [rir, setRir] = useState("");
   const [isWarmup, setIsWarmup] = useState(false);
   const [saving, setSaving] = useState(false);
+  const [notes, setNotes] = useState(exercise.notes ?? "");
+  const notesTimerRef = useRef<NodeJS.Timeout | null>(null);
 
   // Pre-preenche com valores da serie anterior
   useEffect(() => {
@@ -384,15 +534,27 @@ function ExerciseCard({
     const r = parseInt(reps);
     const rirVal = rir ? parseInt(rir) : null;
     if (!w || w <= 0 || !r || r <= 0) {
-      alert("Informe peso e reps válidos");
+      toast.error("Informe peso e reps válidos");
       return;
     }
     setSaving(true);
-    onAddSet(w, r, rirVal, isWarmup);
-    setReps("");
-    setRir("");
-    setIsWarmup(false);
+    const success = await onAddSet(w, r, rirVal, isWarmup);
+    if (success) {
+      toast.success(isWarmup ? "Aquecimento salvo" : "Série salva");
+      if ("vibrate" in navigator) navigator.vibrate(30);
+      setReps("");
+      setRir("");
+      setIsWarmup(false);
+    }
     setSaving(false);
+  }
+
+  function handleNotesChange(value: string) {
+    setNotes(value);
+    if (notesTimerRef.current) clearTimeout(notesTimerRef.current);
+    notesTimerRef.current = setTimeout(async () => {
+      await supabase.from("session_exercises").update({ notes: value || null } as any).eq("id", exercise.id);
+    }, 800);
   }
 
   const realSets = exercise.sets.filter((s) => !s.is_warmup);
@@ -467,19 +629,60 @@ function ExerciseCard({
             <div></div>
           </div>
           {warmupSets.map((s, i) => (
-            <SetRow key={s.id} set={s} setNumber={`A${i + 1}`} onDelete={isReadOnly ? undefined : () => onDeleteSet(s.id)} />
+            <SetRow
+              key={s.id}
+              set={s}
+              setNumber={`A${i + 1}`}
+              onDelete={isReadOnly ? undefined : () => onDeleteSet(s.id)}
+            />
           ))}
           {realSets.map((s, i) => (
-            <SetRow key={s.id} set={s} setNumber={String(i + 1)} onDelete={isReadOnly ? undefined : () => onDeleteSet(s.id)} />
+            <SetRow
+              key={s.id}
+              set={s}
+              setNumber={String(i + 1)}
+              onDelete={isReadOnly ? undefined : () => onDeleteSet(s.id)}
+            />
           ))}
         </div>
       )}
 
-      {/* Sessão anterior */}
-      {exercise.prevBest && (
-        <div className="mt-2 text-xs flex justify-between" style={{ color: "var(--muted)" }}>
-          <span>Anterior: {fmtKg(exercise.prevBest.weight)}kg × {exercise.prevBest.reps}</span>
-          <span className="tabular">e1RM {fmtKg(exercise.prevBest.e1rm)}</span>
+      {/* Última sessão */}
+      {exercise.prevSession && (
+        <div
+          className="mt-2 pt-2"
+          style={{ borderTop: "0.5px solid var(--border)" }}
+        >
+          <div className="flex items-center justify-between mb-1">
+            <span
+              className="text-xs font-bold"
+              style={{ color: "var(--faint)", letterSpacing: "0.08em", textTransform: "uppercase" }}
+            >
+              Última sessão
+            </span>
+            {(() => {
+              const w = parseFloat(weight);
+              if (!weight || isNaN(w)) return null;
+              const delta = w - exercise.prevSession!.maxWeight;
+              if (delta === 0) return null;
+              return (
+                <span
+                  className="text-xs font-bold tabular"
+                  style={{ color: delta > 0 ? "var(--accent)" : "#ff8888" }}
+                >
+                  {delta > 0 ? "↑" : "↓"} {delta > 0 ? "+" : ""}{fmtKg(Math.abs(delta))} kg
+                </span>
+              );
+            })()}
+          </div>
+          <div className="flex flex-wrap gap-x-3 gap-y-0.5">
+            {exercise.prevSession.sets.map((s, i) => (
+              <span key={i} className="text-xs tabular" style={{ color: "var(--muted)" }}>
+                {i + 1}. {fmtKg(s.weight_kg)}×{s.reps}
+                {s.rir != null ? <span style={{ color: "var(--faint)" }}> @{s.rir}</span> : null}
+              </span>
+            ))}
+          </div>
         </div>
       )}
 
@@ -538,7 +741,10 @@ function ExerciseCard({
             />
           </div>
           <div className="flex gap-2 items-center mb-2">
-            <label className="flex items-center gap-1.5 text-xs cursor-pointer" style={{ color: "var(--muted)" }}>
+            <label
+              className="flex items-center gap-1.5 text-xs cursor-pointer"
+              style={{ color: "var(--muted)" }}
+            >
               <input
                 type="checkbox"
                 checked={isWarmup}
@@ -548,8 +754,21 @@ function ExerciseCard({
               Aquecimento
             </label>
           </div>
+          <textarea
+            value={notes}
+            onChange={(e) => handleNotesChange(e.target.value)}
+            placeholder="Notas do exercício (opcional)"
+            rows={2}
+            className="w-full rounded-md px-3 py-2 text-xs resize-none mb-2"
+            style={{
+              background: "var(--background)",
+              border: "0.5px solid var(--border)",
+              color: "var(--muted)",
+              outline: "none",
+            }}
+          />
           <Button onClick={handleSave} disabled={saving} fullWidth size="sm">
-            Salvar série
+            {saving ? "Salvando..." : "Salvar série"}
           </Button>
         </div>
       )}
@@ -557,16 +776,127 @@ function ExerciseCard({
   );
 }
 
-function SetRow({ set, setNumber, onDelete }: { set: SessionSet; setNumber: string; onDelete?: () => void }) {
+// ============================================================
+// Modal de finalização — energia + notas
+// ============================================================
+function FinishSessionModal({
+  onFinish,
+  onCancel,
+}: {
+  onFinish: (energyLevel: number | null, notes: string) => void;
+  onCancel: () => void;
+}) {
+  const [energy, setEnergy] = useState<number | null>(null);
+  const [notes, setNotes] = useState("");
+
+  return (
+    <div
+      onClick={onCancel}
+      className="fixed inset-0 z-50 flex items-end sm:items-center justify-center"
+      style={{ background: "rgba(4, 6, 7, 0.75)", backdropFilter: "blur(8px)" }}
+    >
+      <div
+        onClick={(e) => e.stopPropagation()}
+        className="w-full max-w-md rounded-t-2xl sm:rounded-2xl p-5 fade-in"
+        style={{
+          background: "var(--background)",
+          border: "0.5px solid var(--border-strong)",
+          paddingBottom: "calc(1.25rem + env(safe-area-inset-bottom))",
+        }}
+      >
+        <h2 className="text-lg font-bold mb-4">Como foi o treino?</h2>
+
+        <div className="mb-4">
+          <div
+            className="text-xs font-bold mb-2"
+            style={{ color: "var(--muted)", letterSpacing: "0.08em", textTransform: "uppercase" }}
+          >
+            Energia
+          </div>
+          <div className="flex gap-2">
+            {[1, 2, 3, 4, 5].map((level) => (
+              <button
+                key={level}
+                onClick={() => setEnergy(energy === level ? null : level)}
+                className="flex-1 py-2.5 rounded-lg text-sm font-bold"
+                style={{
+                  background: energy === level ? "var(--primary)" : "var(--surface)",
+                  color: energy === level ? "var(--background)" : "var(--muted)",
+                  border: `0.5px solid ${energy === level ? "var(--primary)" : "var(--border)"}`,
+                  minHeight: "44px",
+                }}
+              >
+                {level}
+              </button>
+            ))}
+          </div>
+        </div>
+
+        <div className="mb-5">
+          <div
+            className="text-xs font-bold mb-2"
+            style={{ color: "var(--muted)", letterSpacing: "0.08em", textTransform: "uppercase" }}
+          >
+            Notas da sessão
+          </div>
+          <textarea
+            value={notes}
+            onChange={(e) => setNotes(e.target.value)}
+            placeholder="Como foi? O que sentiu?"
+            rows={3}
+            className="w-full rounded-lg px-3 py-2.5 text-sm resize-none"
+            style={{
+              background: "var(--surface)",
+              border: "0.5px solid var(--border)",
+              color: "var(--text)",
+              outline: "none",
+            }}
+          />
+        </div>
+
+        <div className="flex gap-2">
+          <button
+            onClick={() => onFinish(energy, notes)}
+            className="flex-1 py-3 rounded-xl font-bold text-sm cursor-pointer"
+            style={{ background: "var(--primary)", color: "var(--background)" }}
+          >
+            Finalizar treino
+          </button>
+          <button
+            onClick={onCancel}
+            className="flex-1 py-3 rounded-xl font-bold text-sm cursor-pointer"
+            style={{
+              background: "var(--surface-strong)",
+              color: "var(--muted)",
+              border: "0.5px solid var(--border)",
+            }}
+          >
+            Cancelar
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function SetRow({
+  set,
+  setNumber,
+  onDelete,
+}: {
+  set: SessionSet;
+  setNumber: string;
+  onDelete?: () => void;
+}) {
   return (
     <div
       className="grid items-center py-1.5 text-sm"
-      style={{
-        gridTemplateColumns: "24px 1fr 1fr 1fr 28px",
-        gap: "8px",
-      }}
+      style={{ gridTemplateColumns: "24px 1fr 1fr 1fr 28px", gap: "8px" }}
     >
-      <div className="font-bold text-xs" style={{ color: set.is_warmup ? "var(--muted)" : "var(--accent)" }}>
+      <div
+        className="font-bold text-xs"
+        style={{ color: set.is_warmup ? "var(--muted)" : "var(--accent)" }}
+      >
         {setNumber}
       </div>
       <div className="tabular font-medium">{fmtKg(set.weight_kg)}</div>
@@ -576,7 +906,11 @@ function SetRow({ set, setNumber, onDelete }: { set: SessionSet; setNumber: stri
       </div>
       <div>
         {onDelete && (
-          <button onClick={onDelete} className="text-xs" style={{ color: "var(--faint)", minHeight: "auto", padding: "2px 4px" }}>
+          <button
+            onClick={onDelete}
+            className="text-xs"
+            style={{ color: "var(--faint)", minHeight: "auto", padding: "2px 4px" }}
+          >
             ×
           </button>
         )}

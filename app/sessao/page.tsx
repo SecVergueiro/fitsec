@@ -6,11 +6,13 @@ import { useRouter } from "next/navigation";
 import { supabase } from "@/lib/supabase";
 import { Card, Eyebrow, PageHeader, Pill } from "@/components/ui";
 import { Button, Spinner } from "@/components/Button";
+import { useToast } from "@/components/Toast";
 import { fmtRelativeDate, WEEKDAY_LABELS } from "@/lib/utils";
 import type { TemplateDay, WorkoutSession } from "@/lib/database.types";
 
 export default function SessaoIndex() {
   const router = useRouter();
+  const toast = useToast();
   const [loading, setLoading] = useState(true);
   const [activeSession, setActiveSession] = useState<WorkoutSession | null>(null);
   const [todayDay, setTodayDay] = useState<TemplateDay | null>(null);
@@ -101,7 +103,7 @@ export default function SessaoIndex() {
       .single();
 
     if (error || !session) {
-      alert("Erro ao iniciar sessão: " + error?.message);
+      toast.error("Erro ao iniciar sessão" + (error?.message ? `: ${error.message}` : ""));
       setStarting(false);
       return;
     }

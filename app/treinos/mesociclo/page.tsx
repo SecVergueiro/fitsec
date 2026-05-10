@@ -5,10 +5,12 @@ import Link from "next/link";
 import { supabase } from "@/lib/supabase";
 import { Card, Eyebrow, PageHeader, Pill } from "@/components/ui";
 import { Button, Spinner } from "@/components/Button";
+import { useConfirm } from "@/components/Toast";
 import { weekNumber } from "@/lib/utils";
 import type { Mesocycle, WorkoutSession } from "@/lib/database.types";
 
 export default function MesocicloPage() {
+  const confirm = useConfirm();
   const [meso, setMeso] = useState<(Mesocycle & { template_name?: string }) | null>(null);
   const [sessions, setSessions] = useState<WorkoutSession[]>([]);
   const [loading, setLoading] = useState(true);
@@ -43,7 +45,13 @@ export default function MesocicloPage() {
 
   async function endMeso() {
     if (!meso) return;
-    if (!confirm("Encerrar esse mesociclo?")) return;
+    const ok = await confirm({
+      title: "Encerrar mesociclo?",
+      message: "O bloco será marcado como encerrado.",
+      confirmLabel: "Encerrar",
+      danger: true,
+    });
+    if (!ok) return;
     await supabase
       .from("mesocycles")
       .update({ is_active: false, end_date: new Date().toISOString().slice(0, 10) } as any)

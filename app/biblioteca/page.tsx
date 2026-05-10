@@ -127,27 +127,53 @@ export default function BibliotecaPage() {
 
       {/* Resultados */}
       <Eyebrow className="mb-2">
-        {loading
-          ? "Carregando..."
-          : `Resultados · ${filtered.parents.length}`}
+        {loading ? "Exercícios" : `Resultados · ${filtered.parents.length}`}
       </Eyebrow>
 
-      {!loading && filtered.parents.length === 0 && (
-        <Card className="text-center py-6">
-          <div style={{ color: "var(--muted)" }}>Nenhum exercício encontrado</div>
-        </Card>
-      )}
-
-      <div className="mb-4">
-        {filtered.parents.map((ex) => (
-          <div key={ex.id}>
-            <ExerciseItem exercise={ex} />
-            {filtered.variationsByParent[ex.id]?.map((v) => (
-              <ExerciseItem key={v.id} exercise={v} isVariation />
+      {loading ? (
+        <div className="mb-4">
+          {Array.from({ length: 9 }, (_, i) => (
+            <div
+              key={i}
+              className="flex items-center gap-3 px-3 py-3 rounded-xl mb-1 animate-pulse"
+              style={{ background: "var(--surface)" }}
+            >
+              <div
+                className="w-8 h-8 rounded-lg flex-shrink-0"
+                style={{ background: "var(--surface-strong)" }}
+              />
+              <div className="flex-1 min-w-0">
+                <div
+                  className="h-3 rounded mb-1.5"
+                  style={{ background: "var(--surface-strong)", width: `${55 + (i % 4) * 12}%` }}
+                />
+                <div
+                  className="h-2 rounded"
+                  style={{ background: "var(--surface-strong)", width: "35%" }}
+                />
+              </div>
+            </div>
+          ))}
+        </div>
+      ) : (
+        <>
+          {filtered.parents.length === 0 && (
+            <Card className="text-center py-6">
+              <div style={{ color: "var(--muted)" }}>Nenhum exercício encontrado</div>
+            </Card>
+          )}
+          <div className="mb-4">
+            {filtered.parents.map((ex) => (
+              <div key={ex.id}>
+                <ExerciseItem exercise={ex} />
+                {filtered.variationsByParent[ex.id]?.map((v) => (
+                  <ExerciseItem key={v.id} exercise={v} isVariation />
+                ))}
+              </div>
             ))}
           </div>
-        ))}
-      </div>
+        </>
+      )}
 
       {/* Botao de criar novo */}
       <Card

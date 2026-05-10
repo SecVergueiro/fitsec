@@ -16,7 +16,8 @@ export default function HomePage() {
   const [todayExerciseCount, setTodayExerciseCount] = useState(0);
   const [weekSessions, setWeekSessions] = useState<WorkoutSession[]>([]);
   const [weeklyVolume, setWeeklyVolume] = useState<number | null>(null);
-  const [monthPRs, setMonthPRs] = useState<number>(0);
+  const [streak, setStreak] = useState<number>(0);
+  const [heatmapSessions, setHeatmapSessions] = useState<Set<string>>(new Set());
 
   useEffect(() => {
     loadDashboard();
@@ -106,15 +107,18 @@ export default function HomePage() {
       setWeeklyVolume(0);
     }
 
-    // 6. PRs do mes (placeholder simples — conta sessoes do mes)
-    const startOfMonth = new Date();
-    startOfMonth.setDate(1);
-    const { count: monthSessionsCount } = await supabase
+    // 6. Sequência + heatmap — últimas 16 semanas (112 dias)
+    const sixteenWeeksAgo = new Date();
+    sixteenWeeksAgo.setDate(sixteenWeeksAgo.getDate() - 112);
+    const { data: recentCompleted } = await supabase
       .from("workout_sessions")
-      .select("*", { count: "exact", head: true })
-      .gte("session_date", startOfMonth.toISOString().slice(0, 10));
+      .select("session_date, completed_at")
+      .not("completed_at", "is", null)
+      .gte("session_date", sixteenWeeksAgo.toISOString().slice(0, 10))
+      .order("session_date", { ascending: false });
 
-    setMonthPRs(monthSessionsCount ?? 0);
+    setStreak(computeStreak(recentCompleted ?? []));
+    setHeatmapSessions(new Set((recentCompleted ?? []).map((s) => s.session_date)));
 
     setLoading(false);
   }
@@ -131,13 +135,16 @@ export default function HomePage() {
   return (
     <div className="fade-in">
       <Eyebrow>{dateStr}</Eyebrow>
-      <h1 className="text-2xl mt-1 mb-5" style={{ letterSpacing: "-0.025em" }}>
+      <h1
+        className="text-4xl mt-1 mb-5"
+        style={{ fontFamily: "'Barlow Condensed', sans-serif", fontWeight: 800, letterSpacing: "0.01em" }}
+      >
         Boa, Sec.
       </h1>
 
       {/* Treino de hoje */}
       {loading ? (
-        <Card className="mb-4 h-32 animate-pulse">{" "}</Card>
+        <Card className="mb-4 h-36 animate-pulse">{" "}</Card>
       ) : todayDay ? (
         <Link href="/sessao">
           <Card variant="strong" className="mb-4">
@@ -182,70 +189,113 @@ export default function HomePage() {
       )}
 
       {/* Stats */}
-      <div className="grid grid-cols-2 gap-2 mb-4">
-        <Card className="!p-3">
-          <div className="text-xs" style={{ color: "var(--muted)" }}>
-            Volume / sem
-          </div>
-          <div className="text-2xl font-bold tabular mt-0.5">
-            {weeklyVolume === null ? "—" : formatTonnage(weeklyVolume)}
-          </div>
-          <div className="text-xs font-medium" style={{ color: "var(--accent)" }}>
-            {weekSessions.length} sessões
-          </div>
-        </Card>
-        <Card className="!p-3">
-          <div className="text-xs" style={{ color: "var(--muted)" }}>
-            Sessões no mês
-          </div>
-          <div className="text-2xl font-bold tabular mt-0.5">{monthPRs}</div>
-          <div className="text-xs" style={{ color: "var(--muted)" }}>
-            consistência
-          </div>
-        </Card>
-      </div>
+      {loading ? (
+        <div className="grid grid-cols-2 gap-2 mb-4">
+          <Card className="!p-3 h-20 animate-pulse">{" "}</Card>
+          <Card className="!p-3 h-20 animate-pulse">{" "}</Card>
+        </div>
+      ) : (
+        <div className="grid grid-cols-2 gap-2 mb-4">
+          <Card className="!p-3">
+            <div className="text-xs" style={{ color: "var(--muted)" }}>
+              Volume / sem
+            </div>
+            <div className="text-2xl font-bold tabular mt-0.5">
+              {weeklyVolume === null ? "—" : formatTonnage(weeklyVolume)}
+            </div>
+            <div className="text-xs font-medium" style={{ color: "var(--accent)" }}>
+              {weekSessions.length} sessões
+            </div>
+          </Card>
+          <Card className="!p-3">
+            <div className="text-xs" style={{ color: "var(--muted)" }}>
+              Sequência
+            </div>
+            <div className="flex items-baseline gap-1 mt-0.5">
+              <div className="text-2xl font-bold tabular">{streak}</div>
+              <div className="text-sm font-medium" style={{ color: "var(--muted)" }}>
+                {streak === 1 ? "dia" : "dias"}
+              </div>
+            </div>
+            <div
+              className="text-xs mt-0.5"
+              style={{ color: streak > 0 ? "var(--accent)" : "var(--faint)" }}
+            >
+              {streak === 0
+                ? "sem sequência"
+                : streak === 1
+                ? "dia seguido"
+                : "dias seguidos"}
+            </div>
+          </Card>
+        </div>
+      )}
 
       {/* Calendario semanal */}
       <Eyebrow className="mt-5 mb-2">Esta semana</Eyebrow>
-      <Card className="!p-3">
-        <div className="grid grid-cols-7 gap-1.5">
-          {WEEKDAYS.map((label, idx) => {
-            const isToday = idx === todayDayOfWeek;
-            const isPast = idx < todayDayOfWeek;
-            const sessionDate = new Date();
-            sessionDate.setDate(sessionDate.getDate() - (todayDayOfWeek - idx));
-            const dateStr = sessionDate.toISOString().slice(0, 10);
-            const hasSession = weekSessions.some((s) => s.session_date === dateStr);
-
-            return (
+      {loading ? (
+        <Card className="!p-3">
+          <div className="grid grid-cols-7 gap-1.5">
+            {Array.from({ length: 7 }, (_, i) => (
               <div
-                key={idx}
-                className="aspect-square rounded-md flex items-center justify-center text-xs font-medium"
-                style={
-                  isToday
-                    ? {
-                        background: "var(--background)",
-                        border: "1.5px solid var(--accent)",
-                        color: "var(--accent)",
-                        fontWeight: 700,
-                      }
-                    : hasSession
-                    ? {
-                        background: "var(--primary)",
-                        color: "var(--background)",
-                      }
-                    : {
-                        background: "var(--surface)",
-                        color: isPast ? "var(--faint)" : "var(--muted)",
-                      }
-                }
-              >
-                {label}
-              </div>
-            );
-          })}
-        </div>
-      </Card>
+                key={i}
+                className="aspect-square rounded-md animate-pulse"
+                style={{ background: "var(--surface-strong)" }}
+              />
+            ))}
+          </div>
+        </Card>
+      ) : (
+        <Card className="!p-3">
+          <div className="grid grid-cols-7 gap-1.5">
+            {WEEKDAYS.map((label, idx) => {
+              const isToday = idx === todayDayOfWeek;
+              const isPast = idx < todayDayOfWeek;
+              const sessionDate = new Date();
+              sessionDate.setDate(sessionDate.getDate() - (todayDayOfWeek - idx));
+              const dStr = sessionDate.toISOString().slice(0, 10);
+              const hasSession = weekSessions.some((s) => s.session_date === dStr);
+
+              return (
+                <div
+                  key={idx}
+                  className="aspect-square rounded-md flex items-center justify-center text-xs font-medium"
+                  style={
+                    isToday
+                      ? {
+                          background: "var(--background)",
+                          border: "1.5px solid var(--accent)",
+                          color: "var(--accent)",
+                          fontWeight: 700,
+                        }
+                      : hasSession
+                      ? {
+                          background: "var(--primary)",
+                          color: "var(--background)",
+                        }
+                      : {
+                          background: "var(--surface)",
+                          color: isPast ? "var(--faint)" : "var(--muted)",
+                        }
+                  }
+                >
+                  {label}
+                </div>
+              );
+            })}
+          </div>
+        </Card>
+      )}
+
+      {/* Heatmap de treinos — últimas 16 semanas */}
+      {!loading && heatmapSessions.size > 0 && (
+        <>
+          <Eyebrow className="mt-5 mb-2">Histórico · 16 semanas</Eyebrow>
+          <Card className="!p-3 mb-4">
+            <TrainingHeatmap sessionDates={heatmapSessions} />
+          </Card>
+        </>
+      )}
 
       {/* Atalhos rapidos */}
       <div className="grid grid-cols-2 gap-2 mt-4">
@@ -274,6 +324,56 @@ export default function HomePage() {
   );
 }
 
+// ─── Heatmap de treinos ─────────────────────────────────────────────────────
+
+function TrainingHeatmap({ sessionDates }: { sessionDates: Set<string> }) {
+  const WEEKS = 16;
+  const today = new Date();
+  const todayStr = today.toISOString().slice(0, 10);
+
+  // Start aligned to Monday, 16 weeks back
+  const start = new Date(today);
+  start.setDate(start.getDate() - WEEKS * 7 + 1);
+  const dow = start.getDay();
+  start.setDate(start.getDate() + (dow === 0 ? -6 : 1 - dow));
+
+  // 7 rows (Mon–Sun) × WEEKS columns
+  return (
+    <div className="space-y-1">
+      {Array.from({ length: 7 }, (_, day) => (
+        <div key={day} className="flex gap-1">
+          {Array.from({ length: WEEKS }, (_, week) => {
+            const d = new Date(start);
+            d.setDate(d.getDate() + week * 7 + day);
+            const dateStr = d.toISOString().slice(0, 10);
+            const hasSession = sessionDates.has(dateStr);
+            const isFuture = dateStr > todayStr;
+            const isToday = dateStr === todayStr;
+            return (
+              <div
+                key={week}
+                className="rounded-sm flex-1"
+                style={{
+                  aspectRatio: "1",
+                  background: hasSession
+                    ? "var(--primary)"
+                    : isToday
+                    ? "rgba(68, 147, 224, 0.18)"
+                    : "var(--surface)",
+                  opacity: isFuture ? 0.12 : 1,
+                  border: isToday ? "1px solid rgba(68, 147, 224, 0.35)" : "none",
+                }}
+              />
+            );
+          })}
+        </div>
+      ))}
+    </div>
+  );
+}
+
+// ─── Helpers ────────────────────────────────────────────────────────────────
+
 function formatTonnage(kg: number): string {
   if (kg >= 1000) return `${(kg / 1000).toFixed(1)}t`;
   return `${Math.round(kg)}kg`;
@@ -284,4 +384,29 @@ function weekNumber(startDate: string): number {
   const now = new Date();
   const diffDays = Math.floor((now.getTime() - start.getTime()) / (1000 * 60 * 60 * 24));
   return Math.floor(diffDays / 7) + 1;
+}
+
+function computeStreak(sessions: { session_date: string }[]): number {
+  const sessionDates = new Set(sessions.map((s) => s.session_date));
+  const today = new Date();
+  const todayStr = today.toISOString().slice(0, 10);
+
+  let streak = 0;
+  const cursor = new Date(today);
+
+  if (!sessionDates.has(todayStr)) {
+    cursor.setDate(cursor.getDate() - 1);
+  }
+
+  while (true) {
+    const dateStr = cursor.toISOString().slice(0, 10);
+    if (sessionDates.has(dateStr)) {
+      streak++;
+      cursor.setDate(cursor.getDate() - 1);
+    } else {
+      break;
+    }
+  }
+
+  return streak;
 }

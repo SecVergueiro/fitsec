@@ -97,7 +97,10 @@ export function PageHeader({
   return (
     <div className="mb-5">
       {eyebrow && <Eyebrow>{eyebrow}</Eyebrow>}
-      <h1 className="text-2xl mt-1" style={{ letterSpacing: "-0.025em" }}>
+      <h1
+        className="text-3xl mt-1"
+        style={{ fontFamily: "'Barlow Condensed', sans-serif", fontWeight: 800, letterSpacing: "0.01em" }}
+      >
         {title}
       </h1>
       {subtitle && (

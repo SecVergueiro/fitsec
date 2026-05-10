@@ -1,6 +1,7 @@
 import type { Metadata, Viewport } from "next";
 import "./globals.css";
 import { BottomNav } from "@/components/BottomNav";
+import { Providers } from "@/components/Providers";
 
 export const metadata: Metadata = {
   title: "FitSec",
@@ -29,13 +30,15 @@ export default function RootLayout({
   return (
     <html lang="pt-BR">
       <body>
-        <main
-          className="max-w-md mx-auto px-5 pt-6 pb-28"
-          style={{ minHeight: "100vh" }}
-        >
-          {children}
-        </main>
-        <BottomNav />
+        <Providers>
+          <main
+            className="max-w-md mx-auto px-5 pt-6 pb-28"
+            style={{ minHeight: "100vh" }}
+          >
+            {children}
+          </main>
+          <BottomNav />
+        </Providers>
       </body>
     </html>
   );

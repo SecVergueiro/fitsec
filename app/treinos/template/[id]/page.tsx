@@ -5,7 +5,8 @@ import Link from "next/link";
 import { useParams, useRouter } from "next/navigation";
 import { supabase } from "@/lib/supabase";
 import { Card, Eyebrow, PageHeader, Pill } from "@/components/ui";
-import { Button, Input, Spinner } from "@/components/Button";
+import { Button, EmptyState, Input, Spinner } from "@/components/Button";
+import { useConfirm, useToast } from "@/components/Toast";
 import { WEEKDAY_LABELS } from "@/lib/utils";
 import type { Template, TemplateDay } from "@/lib/database.types";
 
@@ -13,6 +14,8 @@ export default function TemplateDetailPage() {
   const params = useParams();
   const router = useRouter();
   const templateId = params.id as string;
+  const confirm = useConfirm();
+  const toast = useToast();
 
   const [template, setTemplate] = useState<Template | null>(null);
   const [days, setDays] = useState<(TemplateDay & { exercise_count: number })[]>([]);
@@ -61,8 +64,57 @@ export default function TemplateDetailPage() {
     loadData();
   }
 
+  async function duplicateTemplate() {
+    if (!template) return;
+    const newName = `${template.name} (cópia)`;
+    const { data: newTpl, error } = await supabase
+      .from("templates")
+      .insert({ name: newName, description: template.description, split_type: template.split_type, is_active: false } as any)
+      .select()
+      .single();
+    if (error || !newTpl) { toast.error("Erro ao duplicar template"); return; }
+
+    for (const day of days) {
+      const { data: newDay } = await supabase
+        .from("template_days")
+        .insert({ template_id: (newTpl as any).id, name: day.name, day_order: day.day_order, weekday: day.weekday } as any)
+        .select()
+        .single();
+      if (!newDay) continue;
+
+      const { data: exList } = await supabase
+        .from("template_exercises")
+        .select("*")
+        .eq("template_day_id", day.id);
+      if (exList && exList.length > 0) {
+        await supabase.from("template_exercises").insert(
+          (exList as any[]).map((ex) => ({
+            template_day_id: (newDay as any).id,
+            exercise_id: ex.exercise_id,
+            exercise_order: ex.exercise_order,
+            prescribed_sets: ex.prescribed_sets,
+            rep_range_min: ex.rep_range_min,
+            rep_range_max: ex.rep_range_max,
+            target_rir: ex.target_rir,
+            rest_seconds: ex.rest_seconds,
+            notes: ex.notes,
+          }))
+        );
+      }
+    }
+
+    toast.success(`Template duplicado`);
+    router.push(`/treinos/template/${(newTpl as any).id}`);
+  }
+
   async function deleteTemplate() {
-    if (!confirm("Excluir esse template? Os mesociclos vinculados serão afetados.")) return;
+    const ok = await confirm({
+      title: "Excluir template?",
+      message: "Os mesociclos vinculados serão afetados.",
+      confirmLabel: "Excluir",
+      danger: true,
+    });
+    if (!ok) return;
     await supabase.from("templates").delete().eq("id", templateId);
     router.push("/treinos");
   }
@@ -76,7 +128,28 @@ export default function TemplateDetailPage() {
   }
 
   if (!template) {
-    return <div>Template não encontrado</div>;
+    return (
+      <div className="fade-in">
+        <Link
+          href="/treinos"
+          className="text-xs font-medium block mb-4"
+          style={{ color: "var(--muted)", minHeight: "auto" }}
+        >
+          ← Treinos
+        </Link>
+        <EmptyState
+          title="Template não encontrado"
+          description="Esse template não existe ou foi removido."
+          action={
+            <Link href="/treinos">
+              <Button size="sm" variant="secondary">
+                Voltar para treinos
+              </Button>
+            </Link>
+          }
+        />
+      </div>
+    );
   }
 
   return (
@@ -168,13 +241,22 @@ export default function TemplateDetailPage() {
         </Card>
       )}
 
-      <button
-        onClick={deleteTemplate}
-        className="text-xs mt-6 block mx-auto"
-        style={{ color: "#ff8888", minHeight: "auto" }}
-      >
-        Excluir template
-      </button>
+      <div className="flex flex-col items-center gap-3 mt-6">
+        <button
+          onClick={duplicateTemplate}
+          className="text-xs font-medium"
+          style={{ color: "var(--muted)", minHeight: "auto" }}
+        >
+          Duplicar template
+        </button>
+        <button
+          onClick={deleteTemplate}
+          className="text-xs"
+          style={{ color: "#ff8888", minHeight: "auto" }}
+        >
+          Excluir template
+        </button>
+      </div>
     </div>
   );
 }
