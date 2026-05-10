@@ -23,6 +23,8 @@ export default function SessaoIndex() {
   const [activeMesoId, setActiveMesoId] = useState<string | null>(null);
   const [activeMeso, setActiveMeso] = useState<Mesocycle | null>(null);
   const [starting, setStarting] = useState(false);
+  const [showCheckin, setShowCheckin] = useState(false);
+  const [pendingDayId, setPendingDayId] = useState<string | null>(null);
 
   useEffect(() => {
     init();
@@ -116,8 +118,15 @@ export default function SessaoIndex() {
     setLoading(false);
   }
 
-  async function startSession(templateDayId: string | null) {
+  function startSession(templateDayId: string | null) {
+    setPendingDayId(templateDayId);
+    setShowCheckin(true);
+  }
+
+  async function confirmCheckin(bodyweight: number | null, energy: number | null) {
     setStarting(true);
+    setShowCheckin(false);
+    const templateDayId = pendingDayId;
 
     const { data: session, error } = await supabase
       .from("workout_sessions")
@@ -126,6 +135,8 @@ export default function SessaoIndex() {
         mesocycle_id: activeMesoId,
         session_date: new Date().toLocaleDateString("en-CA"),
         started_at: new Date().toISOString(),
+        bodyweight_kg: bodyweight,
+        energy_level: energy,
       } as any)
       .select()
       .single();
@@ -311,6 +322,128 @@ export default function SessaoIndex() {
           )}
         </div>
       )}
+      {showCheckin && (
+        <CheckinModal
+          onConfirm={confirmCheckin}
+          onSkip={() => confirmCheckin(null, null)}
+        />
+      )}
+    </div>
+  );
+}
+
+// ============================================================
+// CheckinModal — peso corporal + energia antes do treino
+// ============================================================
+const ENERGY_LABELS = ["", "Péssimo", "Ruim", "Ok", "Bom", "Ótimo"];
+const ENERGY_COLORS = ["", "#ef4444", "#f97316", "#eab308", "#22c55e", "var(--accent)"];
+
+function CheckinModal({
+  onConfirm,
+  onSkip,
+}: {
+  onConfirm: (bodyweight: number | null, energy: number | null) => void;
+  onSkip: () => void;
+}) {
+  const [bodyweight, setBodyweight] = useState("");
+  const [energy, setEnergy] = useState<number | null>(null);
+
+  function handleConfirm() {
+    const bw = bodyweight.trim() !== "" ? parseFloat(bodyweight) : null;
+    onConfirm(bw && bw > 0 ? bw : null, energy);
+  }
+
+  return (
+    <div
+      className="fixed inset-0 z-50 flex items-end justify-center"
+      style={{ background: "rgba(0,0,0,0.72)", backdropFilter: "blur(8px)" }}
+    >
+      <div
+        className="w-full max-w-lg rounded-t-2xl p-6 pb-12 fade-in"
+        style={{ background: "var(--background)", border: "0.5px solid var(--border-strong)", borderBottom: "none" }}
+      >
+        <div className="text-center mb-6">
+          <h2 className="text-xl font-bold">Check-in</h2>
+          <p className="text-sm mt-1" style={{ color: "var(--muted)" }}>
+            Registre seu estado antes de treinar
+          </p>
+        </div>
+
+        {/* Peso corporal */}
+        <div className="mb-5">
+          <div className="text-xs font-bold mb-2" style={{ color: "var(--muted)", letterSpacing: "0.1em", textTransform: "uppercase" }}>
+            Peso corporal (kg)
+          </div>
+          <input
+            type="number"
+            inputMode="decimal"
+            placeholder="Ex: 80"
+            value={bodyweight}
+            onChange={(e) => setBodyweight(e.target.value)}
+            style={{
+              width: "100%",
+              textAlign: "center",
+              fontWeight: 700,
+              fontSize: 28,
+              background: "var(--surface)",
+              border: "0.5px solid var(--border-strong)",
+              borderRadius: 12,
+              height: 64,
+              color: "var(--text)",
+              outline: "none",
+            }}
+          />
+        </div>
+
+        {/* Nível de energia */}
+        <div className="mb-6">
+          <div className="text-xs font-bold mb-2" style={{ color: "var(--muted)", letterSpacing: "0.1em", textTransform: "uppercase" }}>
+            Como você está?
+          </div>
+          <div style={{ display: "flex", gap: "8px" }}>
+            {[1, 2, 3, 4, 5].map((n) => (
+              <button
+                key={n}
+                onClick={() => setEnergy(energy === n ? null : n)}
+                style={{
+                  flex: 1, height: 52, minHeight: 52, borderRadius: 10,
+                  fontWeight: 700, fontSize: 13,
+                  display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center", gap: 2,
+                  background: energy === n ? ENERGY_COLORS[n] + "22" : "var(--surface)",
+                  border: `1.5px solid ${energy === n ? ENERGY_COLORS[n] : "var(--border)"}`,
+                  color: energy === n ? ENERGY_COLORS[n] : "var(--faint)",
+                  cursor: "pointer", transition: "all 0.15s",
+                }}
+              >
+                <span style={{ fontSize: 16, fontWeight: 800 }}>{n}</span>
+                <span style={{ fontSize: 9, letterSpacing: "0.04em" }}>{ENERGY_LABELS[n].toUpperCase()}</span>
+              </button>
+            ))}
+          </div>
+        </div>
+
+        <button
+          onClick={handleConfirm}
+          style={{
+            width: "100%", height: 50,
+            background: "var(--primary)", color: "var(--background)",
+            borderRadius: 12, fontWeight: 700, fontSize: 15,
+            border: "none", cursor: "pointer", marginBottom: 10,
+          }}
+        >
+          Iniciar treino →
+        </button>
+        <button
+          onClick={onSkip}
+          style={{
+            width: "100%", height: 36, background: "transparent",
+            color: "var(--muted)", borderRadius: 10, fontWeight: 600,
+            fontSize: 13, border: "none", cursor: "pointer",
+          }}
+        >
+          Pular check-in
+        </button>
+      </div>
     </div>
   );
 }

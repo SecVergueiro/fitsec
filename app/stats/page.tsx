@@ -27,6 +27,7 @@ type TimeFilter = "all" | "month" | "block";
 interface MuscleVolume {
   muscle: string;
   volume: number;
+  sets: number;
   pct: number;
 }
 
@@ -150,18 +151,21 @@ export default function StatsPage() {
       .slice(0, 5) as PersonalRecord[];
     setRecentPRs(recent);
 
-    // Volume por músculo
-    const byMuscle: Record<string, number> = {};
+    // Volume por músculo (tonelagem + contagem de séries)
+    const byMuscle: Record<string, { volume: number; sets: number }> = {};
     workingSets.forEach((s: any) => {
       const ex = allExercises.find((e) => e.id === s.exercise_id);
       if (!ex) return;
-      byMuscle[ex.primary_muscle] = (byMuscle[ex.primary_muscle] ?? 0) + s.weight_kg * s.reps;
+      const key = ex.primary_muscle;
+      if (!byMuscle[key]) byMuscle[key] = { volume: 0, sets: 0 };
+      byMuscle[key].volume += s.weight_kg * s.reps;
+      byMuscle[key].sets++;
     });
-    const maxVol = Math.max(...Object.values(byMuscle), 1);
+    const maxSets = Math.max(...Object.values(byMuscle).map((d) => d.sets), 1);
     const muscles: MuscleVolume[] = Object.entries(byMuscle)
-      .map(([muscle, vol]) => ({ muscle, volume: vol, pct: (vol / maxVol) * 100 }))
-      .sort((a, b) => b.volume - a.volume)
-      .slice(0, 6);
+      .map(([muscle, d]) => ({ muscle, volume: d.volume, sets: d.sets, pct: (d.sets / maxSets) * 100 }))
+      .sort((a, b) => b.sets - a.sets)
+      .slice(0, 8);
     setMuscleVolumes(muscles);
 
     // Volume semanal — últimas 8 semanas (sempre usa todos os sets, ignora filtro temporal)
@@ -319,17 +323,20 @@ export default function StatsPage() {
               <Eyebrow className="mb-2">Volume por músculo</Eyebrow>
               <Card className="mb-5">
                 <div className="space-y-3">
-                  {muscleVolumes.map(({ muscle, volume, pct }) => (
+                  {muscleVolumes.map(({ muscle, volume, sets, pct }) => (
                     <div key={muscle}>
-                      <div className="flex justify-between text-xs mb-1.5">
+                      <div className="flex justify-between items-baseline text-xs mb-1.5">
                         <span className="font-medium">
                           {(MUSCLE_LABELS as Record<string, string>)[muscle] ?? muscle}
                         </span>
-                        <span style={{ color: "var(--muted)" }}>
-                          {volume >= 1000
-                            ? `${(volume / 1000).toFixed(1)}t`
-                            : `${Math.round(volume)}kg`}
-                        </span>
+                        <div className="flex items-baseline gap-2">
+                          <span className="font-bold tabular" style={{ color: "var(--accent)" }}>
+                            {sets} {sets === 1 ? "série" : "séries"}
+                          </span>
+                          <span style={{ color: "var(--faint)" }}>
+                            {volume >= 1000 ? `${(volume / 1000).toFixed(1)}t` : `${Math.round(volume)}kg`}
+                          </span>
+                        </div>
                       </div>
                       <div
                         className="h-1.5 rounded-full overflow-hidden"

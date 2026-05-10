@@ -135,7 +135,8 @@ export default function SessaoAtivaPage() {
     weight: number,
     reps: number,
     rir: number | null,
-    isWarmup: boolean
+    isWarmup: boolean,
+    isFailure: boolean = false
   ): Promise<boolean> {
     const ex = exercises[exIdx];
     const setNumber = ex.sets.filter((s) => !s.is_warmup).length + (isWarmup ? 0 : 1);
@@ -151,6 +152,7 @@ export default function SessaoAtivaPage() {
         reps,
         rir,
         is_warmup: isWarmup,
+        is_failure: isFailure,
       } as any)
       .select()
       .single();
@@ -457,7 +459,7 @@ export default function SessaoAtivaPage() {
               isCompleted={ex.is_completed}
               isReadOnly={isCompleted}
               onActivate={() => setActiveIdx(idx)}
-              onAddSet={(weight, reps, rir, isWarmup) => addSet(idx, weight, reps, rir, isWarmup)}
+              onAddSet={(weight, reps, rir, isWarmup, isFailure) => addSet(idx, weight, reps, rir, isWarmup, isFailure)}
               onEditSet={(setId, weight, reps, rir) => editSet(idx, setId, weight, reps, rir)}
               onDeleteSet={(setId) => deleteSet(idx, setId)}
               onToggleCompleted={() => toggleCompleted(idx)}
@@ -555,7 +557,7 @@ function ExerciseCard({
   isCompleted: boolean;
   isReadOnly: boolean;
   onActivate: () => void;
-  onAddSet: (weight: number, reps: number, rir: number | null, isWarmup: boolean) => Promise<boolean>;
+  onAddSet: (weight: number, reps: number, rir: number | null, isWarmup: boolean, isFailure: boolean) => Promise<boolean>;
   onEditSet: (setId: string, weight: number, reps: number, rir: number | null) => void;
   onDeleteSet: (setId: string) => void;
   onToggleCompleted: () => void;
@@ -565,8 +567,10 @@ function ExerciseCard({
   const [reps, setReps] = useState("");
   const [rir, setRir] = useState("");
   const [isWarmup, setIsWarmup] = useState(false);
+  const [isFailure, setIsFailure] = useState(false);
   const [saving, setSaving] = useState(false);
   const [notes, setNotes] = useState(exercise.notes ?? "");
+  const [showTips, setShowTips] = useState(false);
   const notesTimerRef = useRef<NodeJS.Timeout | null>(null);
 
   useEffect(() => {
@@ -591,13 +595,14 @@ function ExerciseCard({
       return;
     }
     setSaving(true);
-    const success = await onAddSet(w, r, rirVal, isWarmup);
+    const success = await onAddSet(w, r, rirVal, isWarmup, isFailure);
     if (success) {
-      toast.success(isWarmup ? "Aquecimento salvo" : "Série salva");
+      toast.success(isWarmup ? "Aquecimento salvo" : isFailure ? "Falha registrada" : "Série salva");
       if ("vibrate" in navigator) navigator.vibrate(30);
       setReps("");
       setRir("");
       setIsWarmup(false);
+      setIsFailure(false);
     }
     setSaving(false);
   }
@@ -637,7 +642,33 @@ function ExerciseCard({
     >
       <div className="flex justify-between items-start gap-2 mb-2">
         <div className="flex-1 min-w-0">
-          <div className="font-bold text-sm">{exercise.exercise.name}</div>
+          <div className="flex items-center gap-1.5">
+            <div className="font-bold text-sm">{exercise.exercise.name}</div>
+            {exercise.exercise.notes && (
+              <button
+                onClick={(e) => { e.stopPropagation(); setShowTips((v) => !v); }}
+                style={{
+                  width: 18, height: 18, minHeight: 18, borderRadius: "50%", flexShrink: 0,
+                  background: showTips ? "rgba(68,147,224,0.2)" : "transparent",
+                  border: `1px solid ${showTips ? "var(--accent)" : "var(--border-strong)"}`,
+                  color: showTips ? "var(--accent)" : "var(--faint)",
+                  fontSize: 10, fontWeight: 700,
+                  display: "flex", alignItems: "center", justifyContent: "center",
+                  cursor: "pointer",
+                }}
+              >
+                i
+              </button>
+            )}
+          </div>
+          {showTips && exercise.exercise.notes && (
+            <div
+              className="mt-1.5 px-2.5 py-2 rounded-lg text-xs"
+              style={{ background: "rgba(68,147,224,0.06)", border: "0.5px solid rgba(68,147,224,0.2)", color: "var(--muted)", lineHeight: 1.5 }}
+            >
+              {exercise.exercise.notes}
+            </div>
+          )}
           <div className="flex gap-1 flex-wrap mt-1.5">
             {exercise.prescribed_sets && (
               <Pill variant="soft">
@@ -846,8 +877,21 @@ function ExerciseCard({
                 onChange={(e) => setIsWarmup(e.target.checked)}
                 style={{ accentColor: "var(--accent)" }}
               />
-              Aquecimento
+              Aquec.
             </label>
+            <button
+              onClick={() => setIsFailure((v) => !v)}
+              style={{
+                fontSize: 11, fontWeight: 600, padding: "3px 10px",
+                borderRadius: 8, cursor: "pointer", minHeight: "auto",
+                background: isFailure ? "rgba(239,68,68,0.12)" : "transparent",
+                border: `0.5px solid ${isFailure ? "rgba(239,68,68,0.4)" : "var(--border)"}`,
+                color: isFailure ? "#ef4444" : "var(--faint)",
+                transition: "all 0.15s",
+              }}
+            >
+              ✕ Falha
+            </button>
           </div>
 
           <textarea
@@ -1074,7 +1118,7 @@ function SetRow({
   if (editing) {
     return (
       <div className="grid items-center py-1" style={{ gridTemplateColumns: "24px 1fr 1fr 1fr 52px", gap: "6px" }}>
-        <div className="font-bold text-xs" style={{ color: set.is_warmup ? "var(--muted)" : "var(--accent)" }}>
+        <div className="font-bold text-xs" style={{ color: set.is_failure ? "#ef4444" : set.is_warmup ? "var(--muted)" : "var(--accent)" }}>
           {setNumber}
         </div>
         <input type="number" inputMode="decimal" value={w} onChange={(e) => setW(e.target.value)}
@@ -1094,8 +1138,8 @@ function SetRow({
 
   return (
     <div className="grid items-center py-1.5 text-sm" style={{ gridTemplateColumns: "24px 1fr 1fr 1fr 52px", gap: "8px" }}>
-      <div className="font-bold text-xs" style={{ color: set.is_warmup ? "var(--muted)" : "var(--accent)" }}>
-        {setNumber}
+      <div className="font-bold text-xs" style={{ color: set.is_failure ? "#ef4444" : set.is_warmup ? "var(--muted)" : "var(--accent)" }}>
+        {setNumber}{set.is_failure ? "!" : ""}
       </div>
       <div className="tabular font-medium">{fmtKg(set.weight_kg)}</div>
       <div className="tabular font-medium">{set.reps}</div>
