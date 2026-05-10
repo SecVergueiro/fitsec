@@ -660,6 +660,7 @@ function ExerciseCard({
   const [isWarmup, setIsWarmup] = useState(false);
   const [isFailure, setIsFailure] = useState(false);
   const [saving, setSaving] = useState(false);
+  const [weightEditing, setWeightEditing] = useState(false);
   const [notes, setNotes] = useState(exercise.notes ?? "");
   const [showTips, setShowTips] = useState(false);
   const notesTimerRef = useRef<NodeJS.Timeout | null>(null);
@@ -1051,8 +1052,14 @@ function ExerciseCard({
           {/* Aquecimento sugerido */}
           {warmupBase > 0 && (
             <div className="mb-4">
-              <div className="text-xs font-bold mb-2" style={{ color: "var(--faint)", letterSpacing: "0.08em", textTransform: "uppercase" }}>
-                Aquecimento · base {fmtKg(warmupBase)} kg
+              <div className="flex items-center gap-1.5 mb-2">
+                <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round" style={{ color: "#fbbf24" }}>
+                  <path d="M12 2a10 10 0 0 1 10 10c0 5.52-4.48 10-10 10S2 17.52 2 12 6.48 2 12 2z" opacity="0"/>
+                  <polygon points="12 2 15.09 8.26 22 9.27 17 14.14 18.18 21.02 12 17.77 5.82 21.02 7 14.14 2 9.27 8.91 8.26 12 2"/>
+                </svg>
+                <span className="text-xs font-bold" style={{ color: "#fbbf24", letterSpacing: "0.08em", textTransform: "uppercase" }}>
+                  Aquecimento · base {fmtKg(warmupBase)} kg
+                </span>
               </div>
               <div className="flex gap-2">
                 {[
@@ -1063,9 +1070,16 @@ function ExerciseCard({
                   const w = Math.round((warmupBase * pct) / 2.5) * 2.5;
                   return (
                     <button key={pct} onClick={() => fillWarmup(pct, warmupReps)}
-                      className="flex-1 rounded-lg text-xs font-medium"
-                      style={{ background: "var(--background)", border: "0.5px solid var(--border-strong)", color: "var(--muted)", padding: "8px 4px", cursor: "pointer" }}>
-                      <div style={{ color: "var(--text)", fontWeight: 700 }}>{fmtKg(w)}</div>
+                      className="flex-1 rounded-xl text-xs font-medium"
+                      style={{
+                        background: "rgba(251,191,36,0.06)",
+                        border: "0.5px solid rgba(251,191,36,0.3)",
+                        color: "var(--muted)",
+                        padding: "9px 4px",
+                        cursor: "pointer",
+                        transition: "all 0.12s ease",
+                      }}>
+                      <div style={{ color: "#fbbf24", fontWeight: 800, fontSize: 14 }}>{fmtKg(w)}</div>
                       <div style={{ color: "var(--faint)", marginTop: 2 }}>×{warmupReps} · {label}</div>
                     </button>
                   );
@@ -1078,12 +1092,45 @@ function ExerciseCard({
           <div className="mb-4">
             <div className="flex items-baseline justify-between mb-2">
               <span className="text-xs font-bold" style={{ color: "var(--faint)", letterSpacing: "0.1em", textTransform: "uppercase" }}>Peso</span>
-              {weightNum > 0 && (
-                <span className="text-3xl font-black tabular" style={{ color: "var(--text)", letterSpacing: "-0.02em" }}>
-                  {fmtKg(weightNum)} <span className="text-base font-bold" style={{ color: "var(--muted)" }}>kg</span>
-                </span>
+              {weightEditing ? (
+                <input
+                  type="number"
+                  inputMode="decimal"
+                  step="0.5"
+                  autoFocus
+                  value={weightNum || ""}
+                  onChange={(e) => {
+                    const v = parseFloat(e.target.value);
+                    setWeightNum(isNaN(v) ? 0 : Math.max(0, v));
+                  }}
+                  onBlur={() => setWeightEditing(false)}
+                  onKeyDown={(e) => e.key === "Enter" && setWeightEditing(false)}
+                  className="text-3xl font-black tabular text-right"
+                  style={{
+                    color: "var(--text)",
+                    letterSpacing: "-0.02em",
+                    background: "transparent",
+                    border: "none",
+                    borderBottom: `2px solid ${muscleColor}`,
+                    outline: "none",
+                    width: "120px",
+                  }}
+                />
+              ) : (
+                <button
+                  onClick={() => setWeightEditing(true)}
+                  title="Toque para digitar"
+                  style={{ minHeight: "auto", cursor: "text", background: "transparent", border: "none", padding: 0 }}
+                >
+                  {weightNum > 0 ? (
+                    <span className="text-3xl font-black tabular" style={{ color: "var(--text)", letterSpacing: "-0.02em" }}>
+                      {fmtKg(weightNum)} <span className="text-base font-bold" style={{ color: "var(--muted)" }}>kg</span>
+                    </span>
+                  ) : (
+                    <span className="text-3xl font-black" style={{ color: "var(--border-strong)" }}>—</span>
+                  )}
+                </button>
               )}
-              {weightNum <= 0 && <span className="text-3xl font-black" style={{ color: "var(--border-strong)" }}>—</span>}
             </div>
             <div className="grid grid-cols-4 gap-1.5">
               {[
@@ -1192,29 +1239,77 @@ function ExerciseCard({
             </div>
           </div>
 
-          {/* Toggles + notas */}
-          <div className="flex gap-2 items-center mb-3">
-            <label className="flex items-center gap-1.5 text-xs cursor-pointer" style={{ color: "var(--muted)" }}>
-              <input type="checkbox" checked={isWarmup} onChange={(e) => setIsWarmup(e.target.checked)} style={{ accentColor: "var(--accent)" }} />
-              Aquec.
-            </label>
+          {/* Toggles: Aquec + Falha */}
+          <div className="flex gap-2 items-center mb-2">
+            <button
+              onClick={() => setIsWarmup((v) => !v)}
+              style={{
+                fontSize: 11, fontWeight: 700, padding: "6px 14px",
+                borderRadius: 8, cursor: "pointer", minHeight: "auto",
+                background: isWarmup ? "rgba(251,191,36,0.13)" : "transparent",
+                border: `0.5px solid ${isWarmup ? "rgba(251,191,36,0.55)" : "var(--border)"}`,
+                color: isWarmup ? "#fbbf24" : "var(--faint)",
+                letterSpacing: "0.04em",
+                transition: "all 0.15s",
+              }}
+            >
+              {isWarmup ? "★ Aquec." : "Aquec."}
+            </button>
             <button
               onClick={() => setIsFailure((v) => !v)}
               style={{
-                fontSize: 11, fontWeight: 600, padding: "4px 12px",
+                fontSize: 11, fontWeight: 700, padding: "6px 14px",
                 borderRadius: 8, cursor: "pointer", minHeight: "auto",
                 background: isFailure ? "rgba(239,68,68,0.12)" : "transparent",
                 border: `0.5px solid ${isFailure ? "rgba(239,68,68,0.4)" : "var(--border)"}`,
                 color: isFailure ? "#ef4444" : "var(--faint)",
+                letterSpacing: "0.04em",
                 transition: "all 0.15s",
               }}
             >
-              Falha
+              {isFailure ? "✕ Falha" : "Falha"}
             </button>
-            <div className="flex items-center gap-1.5 ml-auto" onClick={(e) => e.stopPropagation()}>
-              <button onClick={() => adjustRest(-30)} style={{ color: "var(--faint)", fontSize: 10, minHeight: "auto", padding: "3px 7px", border: "0.5px solid var(--border)", borderRadius: 6, cursor: "pointer" }}>−30s</button>
-              <span className="text-xs font-bold tabular" style={{ color: "var(--muted)" }}>{fmtTimer(localRest)}</span>
-              <button onClick={() => adjustRest(30)} style={{ color: "var(--faint)", fontSize: 10, minHeight: "auto", padding: "3px 7px", border: "0.5px solid var(--border)", borderRadius: 6, cursor: "pointer" }}>+30s</button>
+          </div>
+
+          {/* Rest timer row */}
+          <div
+            className="flex items-center justify-between mb-3 px-3 rounded-xl"
+            style={{
+              background: "rgba(68,147,224,0.06)",
+              border: "0.5px solid rgba(68,147,224,0.18)",
+              height: 44,
+            }}
+            onClick={(e) => e.stopPropagation()}
+          >
+            <div className="flex items-center gap-1.5">
+              <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round" style={{ color: "var(--accent)", flexShrink: 0 }}>
+                <circle cx="12" cy="12" r="10"/><polyline points="12 6 12 12 16 14"/>
+              </svg>
+              <span className="text-xs font-bold" style={{ color: "var(--accent)", letterSpacing: "0.1em", textTransform: "uppercase" }}>Descanso</span>
+            </div>
+            <div className="flex items-center gap-1">
+              <button
+                onClick={() => adjustRest(-30)}
+                style={{
+                  color: "var(--accent)", fontSize: 11, fontWeight: 700, minHeight: "auto",
+                  padding: "4px 9px", border: "0.5px solid rgba(68,147,224,0.25)",
+                  borderRadius: 6, cursor: "pointer", background: "rgba(68,147,224,0.08)",
+                }}
+              >−30</button>
+              <span
+                className="text-sm font-black tabular"
+                style={{ color: "var(--accent)", minWidth: 44, textAlign: "center", letterSpacing: "-0.01em" }}
+              >
+                {fmtTimer(localRest)}
+              </span>
+              <button
+                onClick={() => adjustRest(30)}
+                style={{
+                  color: "var(--accent)", fontSize: 11, fontWeight: 700, minHeight: "auto",
+                  padding: "4px 9px", border: "0.5px solid rgba(68,147,224,0.25)",
+                  borderRadius: 6, cursor: "pointer", background: "rgba(68,147,224,0.08)",
+                }}
+              >+30</button>
             </div>
           </div>
 
