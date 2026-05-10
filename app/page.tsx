@@ -6,6 +6,8 @@ import { supabase } from "@/lib/supabase";
 import { Card, Eyebrow, Pill } from "@/components/ui";
 import { fmtRelativeDate, getStreakMilestone, WEEKDAY_LABELS } from "@/lib/utils";
 import { useProfile } from "@/components/ProfileProvider";
+import { offlineRead } from "@/lib/offline-reads";
+import { db as offlineDB } from "@/lib/offline-db";
 import type { Mesocycle, Template, TemplateDay, WorkoutSession } from "@/lib/database.types";
 
 const WEEKDAYS = ["D", "S", "T", "Q", "Q", "S", "S"];
@@ -65,144 +67,159 @@ export default function HomePage() {
     setLoading(true);
 
     // 0. Sessão em andamento
-    const { data: activeSess } = await supabase
-      .from("workout_sessions")
-      .select("id, started_at")
-      .is("completed_at", null)
-      .order("started_at", { ascending: false })
-      .limit(1)
-      .maybeSingle();
-    setActiveSession(activeSess as { id: string; started_at: string } | null);
+    const activeSess = await offlineRead<{ id: string; started_at: string }>(
+      () => supabase.from("workout_sessions").select("id, started_at").is("completed_at", null).order("started_at", { ascending: false }).limit(1).maybeSingle(),
+      async () => {
+        if (!offlineDB) return null;
+        const list = await offlineDB.workout_sessions.filter((s) => s.completed_at == null).toArray();
+        list.sort((a, b) => new Date(b.started_at).getTime() - new Date(a.started_at).getTime());
+        return list[0] ? { id: list[0].id, started_at: list[0].started_at } : null;
+      }
+    );
+    setActiveSession(activeSess);
 
     // 1. Mesociclo ativo
-    const { data: mesoData } = await supabase
-      .from("mesocycles")
-      .select("*")
-      .eq("is_active", true)
-      .order("start_date", { ascending: false })
-      .limit(1)
-      .maybeSingle();
-
+    const mesoData = await offlineRead<Mesocycle>(
+      () => supabase.from("mesocycles").select("*").eq("is_active", true).order("start_date", { ascending: false }).limit(1).maybeSingle(),
+      async () => {
+        if (!offlineDB) return null;
+        const list = await offlineDB.mesocycles.filter((m) => (m as any).is_active === true).toArray();
+        return list[0] ?? null;
+      }
+    );
     setActiveMeso(mesoData);
 
-    // 2. Template ativo (do mesociclo ou marcado is_active)
+    // 2. Template ativo
     let templateId = mesoData?.template_id;
     if (!templateId) {
-      const { data: tpl } = await supabase
-        .from("templates")
-        .select("*")
-        .eq("is_active", true)
-        .limit(1)
-        .maybeSingle();
+      const tpl = await offlineRead<Template>(
+        () => supabase.from("templates").select("*").eq("is_active", true).limit(1).maybeSingle(),
+        async () => {
+          if (!offlineDB) return null;
+          const list = await offlineDB.templates.filter((t) => (t as any).is_active === true).toArray();
+          return list[0] ?? null;
+        }
+      );
       if (tpl) {
         setActiveTemplate(tpl);
         templateId = tpl.id;
       }
     } else {
-      const { data: tpl } = await supabase
-        .from("templates")
-        .select("*")
-        .eq("id", templateId)
-        .single();
+      const tpl = await offlineRead<Template>(
+        () => supabase.from("templates").select("*").eq("id", templateId!).single(),
+        async () => offlineDB ? (await offlineDB.templates.get(templateId!)) ?? null : null
+      );
       setActiveTemplate(tpl);
     }
 
     // 3. Dia de hoje (baseado em weekday) + próximo treino
     const todayWeekday = new Date().getDay();
     if (templateId) {
-      const { data: allDays } = await supabase
-        .from("template_days")
-        .select("*")
-        .eq("template_id", templateId)
-        .not("weekday", "is", null);
+      const allDays = await offlineRead<TemplateDay[]>(
+        () => supabase.from("template_days").select("*").eq("template_id", templateId!).not("weekday", "is", null),
+        async () => {
+          if (!offlineDB) return [];
+          return offlineDB.template_days.where("template_id").equals(templateId!).filter((d) => d.weekday != null).toArray();
+        }
+      );
 
       const days = (allDays as TemplateDay[]) ?? [];
       const today = days.find((d) => d.weekday === todayWeekday) ?? null;
       setTodayDay(today);
 
+      async function countTplExs(dayId: string): Promise<number> {
+        try {
+          const { count } = await supabase.from("template_exercises").select("*", { count: "exact", head: true }).eq("template_day_id", dayId);
+          return count ?? 0;
+        } catch {
+          if (offlineDB) return offlineDB.template_exercises.where("template_day_id").equals(dayId).count();
+          return 0;
+        }
+      }
+
       if (today) {
-        const { count } = await supabase
-          .from("template_exercises")
-          .select("*", { count: "exact", head: true })
-          .eq("template_day_id", today.id);
-        setTodayExerciseCount(count ?? 0);
+        setTodayExerciseCount(await countTplExs(today.id));
       } else {
-        // Procura próximo dia (até 7 dias à frente)
         for (let i = 1; i <= 7; i++) {
           const checkWeekday = (todayWeekday + i) % 7;
           const found = days.find((d) => d.weekday === checkWeekday);
           if (found) {
-            const { count } = await supabase
-              .from("template_exercises")
-              .select("*", { count: "exact", head: true })
-              .eq("template_day_id", found.id);
-            setNextDay({ day: found, daysAhead: i, exerciseCount: count ?? 0 });
+            const c = await countTplExs(found.id);
+            setNextDay({ day: found, daysAhead: i, exerciseCount: c });
             break;
           }
         }
       }
     }
 
-    // 4. Sessoes da semana atual
+    // 4. Sessões da semana atual
     const startOfWeek = new Date();
     startOfWeek.setDate(startOfWeek.getDate() - startOfWeek.getDay());
     startOfWeek.setHours(0, 0, 0, 0);
+    const startStr = startOfWeek.toISOString().slice(0, 10);
 
-    const { data: sessions } = await supabase
-      .from("workout_sessions")
-      .select("*")
-      .gte("session_date", startOfWeek.toISOString().slice(0, 10));
-
+    const sessions = await offlineRead<WorkoutSession[]>(
+      () => supabase.from("workout_sessions").select("*").gte("session_date", startStr),
+      async () => {
+        if (!offlineDB) return [];
+        return offlineDB.workout_sessions.filter((s) => s.session_date >= startStr).toArray();
+      }
+    );
     setWeekSessions(sessions ?? []);
 
-    // 5. Volume da semana (soma weight*reps das series nao-warmup)
+    // 5. Volume da semana
     if (sessions && sessions.length > 0) {
       const sessionIds = sessions.map((s) => s.id);
-      const { data: sets } = await supabase
-        .from("session_sets")
-        .select("weight_kg, reps, is_warmup")
-        .in("session_id", sessionIds);
-
-      const total =
-        sets?.filter((s) => !s.is_warmup).reduce((sum, s) => sum + s.weight_kg * s.reps, 0) ?? 0;
+      const sets = await offlineRead<any[]>(
+        () => supabase.from("session_sets").select("weight_kg, reps, is_warmup").in("session_id", sessionIds),
+        async () => offlineDB ? offlineDB.session_sets.where("session_id").anyOf(sessionIds).toArray() : []
+      );
+      const total = sets?.filter((s) => !s.is_warmup).reduce((sum, s) => sum + s.weight_kg * s.reps, 0) ?? 0;
       setWeeklyVolume(total);
     } else {
       setWeeklyVolume(0);
     }
 
-    // 5b. Volume da semana anterior — pra mostrar tendência ↑↓
+    // 5b. Volume da semana anterior — pra tendência ↑↓
     const startPrevWeek = new Date(startOfWeek);
     startPrevWeek.setDate(startPrevWeek.getDate() - 7);
     const endPrevWeek = new Date(startOfWeek);
     endPrevWeek.setDate(endPrevWeek.getDate() - 1);
-    const { data: prevSessions } = await supabase
-      .from("workout_sessions")
-      .select("id")
-      .gte("session_date", startPrevWeek.toISOString().slice(0, 10))
-      .lte("session_date", endPrevWeek.toISOString().slice(0, 10));
+    const prevStartStr = startPrevWeek.toISOString().slice(0, 10);
+    const prevEndStr = endPrevWeek.toISOString().slice(0, 10);
+
+    const prevSessions = await offlineRead<{ id: string }[]>(
+      () => supabase.from("workout_sessions").select("id").gte("session_date", prevStartStr).lte("session_date", prevEndStr),
+      async () => {
+        if (!offlineDB) return [];
+        return offlineDB.workout_sessions.filter((s) => s.session_date >= prevStartStr && s.session_date <= prevEndStr).toArray();
+      }
+    );
 
     if (prevSessions && prevSessions.length > 0) {
       const prevIds = prevSessions.map((s) => s.id);
-      const { data: prevSets } = await supabase
-        .from("session_sets")
-        .select("weight_kg, reps, is_warmup")
-        .in("session_id", prevIds);
-      const prevTotal =
-        prevSets?.filter((s) => !s.is_warmup).reduce((sum, s) => sum + s.weight_kg * s.reps, 0) ?? 0;
+      const prevSets = await offlineRead<any[]>(
+        () => supabase.from("session_sets").select("weight_kg, reps, is_warmup").in("session_id", prevIds),
+        async () => offlineDB ? offlineDB.session_sets.where("session_id").anyOf(prevIds).toArray() : []
+      );
+      const prevTotal = prevSets?.filter((s) => !s.is_warmup).reduce((sum, s) => sum + s.weight_kg * s.reps, 0) ?? 0;
       setPrevWeekVolume(prevTotal);
     } else {
       setPrevWeekVolume(0);
     }
 
-    // 6. Sequência + heatmap — últimas 16 semanas (112 dias)
+    // 6. Sequência + heatmap — últimas 16 semanas
     const sixteenWeeksAgo = new Date();
     sixteenWeeksAgo.setDate(sixteenWeeksAgo.getDate() - 112);
-    const { data: recentCompleted } = await supabase
-      .from("workout_sessions")
-      .select("session_date, completed_at")
-      .not("completed_at", "is", null)
-      .gte("session_date", sixteenWeeksAgo.toISOString().slice(0, 10))
-      .order("session_date", { ascending: false });
+    const sixteenStr = sixteenWeeksAgo.toISOString().slice(0, 10);
+    const recentCompleted = await offlineRead<{ session_date: string; completed_at: string | null }[]>(
+      () => supabase.from("workout_sessions").select("session_date, completed_at").not("completed_at", "is", null).gte("session_date", sixteenStr).order("session_date", { ascending: false }),
+      async () => {
+        if (!offlineDB) return [];
+        const all = await offlineDB.workout_sessions.filter((s) => s.completed_at != null && s.session_date >= sixteenStr).toArray();
+        return all.map((s) => ({ session_date: s.session_date, completed_at: s.completed_at }));
+      }
+    );
 
     setStreak(computeStreak(recentCompleted ?? []));
     setHeatmapSessions(new Set((recentCompleted ?? []).map((s) => s.session_date)));

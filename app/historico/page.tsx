@@ -7,6 +7,8 @@ import { Card, Eyebrow, PageHeader, Pill } from "@/components/ui";
 import { Spinner } from "@/components/Button";
 import { useConfirm } from "@/components/Toast";
 import { estimate1RM, fmtDuration, fmtTonnage } from "@/lib/utils";
+import { offlineRead } from "@/lib/offline-reads";
+import { db as offlineDB } from "@/lib/offline-db";
 import type { WorkoutSession } from "@/lib/database.types";
 
 interface SessionWithDay extends WorkoutSession {
@@ -53,11 +55,19 @@ export default function HistoricoPage() {
 
   async function load() {
     setLoading(true);
-    const { data } = await supabase
-      .from("workout_sessions")
-      .select("*, template_days(name)")
-      .not("completed_at", "is", null)
-      .order("session_date", { ascending: false });
+    const data = await offlineRead<any[]>(
+      () => supabase.from("workout_sessions").select("*, template_days(name)").not("completed_at", "is", null).order("session_date", { ascending: false }),
+      async () => {
+        if (!offlineDB) return [];
+        const all = await offlineDB.workout_sessions.filter((s) => s.completed_at != null).toArray();
+        all.sort((a, b) => b.session_date.localeCompare(a.session_date));
+        return Promise.all(all.map(async (s) => {
+          if (!s.template_day_id) return { ...s, template_days: null };
+          const d = await offlineDB.template_days.get(s.template_day_id);
+          return { ...s, template_days: d ? { name: d.name } : null };
+        }));
+      }
+    );
 
     const baseList: SessionWithDay[] = ((data as any[]) ?? []).map((s) => ({
       ...s,
@@ -72,10 +82,13 @@ export default function HistoricoPage() {
 
     // Volume + séries por sessão (uma query agregada)
     const ids = baseList.map((s) => s.id);
-    const { data: allSets } = await supabase
-      .from("session_sets")
-      .select("session_id, exercise_id, weight_kg, reps, is_warmup, performed_at")
-      .in("session_id", ids);
+    const allSets = await offlineRead<any[]>(
+      () => supabase.from("session_sets").select("session_id, exercise_id, weight_kg, reps, is_warmup, performed_at").in("session_id", ids),
+      async () => {
+        if (!offlineDB) return [];
+        return offlineDB.session_sets.where("session_id").anyOf(ids).toArray();
+      }
+    );
 
     const setMap: Record<string, { tonnage: number; setCount: number; sets: any[] }> = {};
     (allSets as any[])?.forEach((s) => {

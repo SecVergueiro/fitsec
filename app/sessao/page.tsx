@@ -9,6 +9,8 @@ import { Button, Spinner } from "@/components/Button";
 import { useToast } from "@/components/Toast";
 import { useProfile } from "@/components/ProfileProvider";
 import { offlineInsert } from "@/lib/offline-writes";
+import { offlineRead } from "@/lib/offline-reads";
+import { db as offlineDB } from "@/lib/offline-db";
 import { fmtRelativeDate, WEEKDAY_LABELS } from "@/lib/utils";
 import type { Mesocycle, TemplateDay, WorkoutSession } from "@/lib/database.types";
 
@@ -37,85 +39,105 @@ export default function SessaoIndex() {
     setLoading(true);
 
     // 1. Sessão em andamento
-    const { data: active } = await supabase
-      .from("workout_sessions")
-      .select("*")
-      .is("completed_at", null)
-      .order("started_at", { ascending: false })
-      .limit(1)
-      .maybeSingle();
+    const active = await offlineRead<WorkoutSession>(
+      () => supabase.from("workout_sessions").select("*").is("completed_at", null).order("started_at", { ascending: false }).limit(1).maybeSingle(),
+      async () => {
+        if (!offlineDB) return null;
+        const list = await offlineDB.workout_sessions.filter((s) => s.completed_at == null).toArray();
+        list.sort((a, b) => new Date(b.started_at).getTime() - new Date(a.started_at).getTime());
+        return list[0] ?? null;
+      }
+    );
 
     if (active) {
-      const elapsedMin = (Date.now() - new Date((active as WorkoutSession).started_at).getTime()) / 60000;
+      const elapsedMin = (Date.now() - new Date(active.started_at).getTime()) / 60000;
       if (elapsedMin > SESSION_MAX_MINUTES) {
-        // Auto-finaliza sessão que ficou aberta >4h
-        const autoEnd = new Date(new Date((active as WorkoutSession).started_at).getTime() + SESSION_MAX_MINUTES * 60000);
-        await supabase
-          .from("workout_sessions")
-          .update({
-            completed_at: autoEnd.toISOString(),
-            ended_at: autoEnd.toISOString(),
-            duration_minutes: SESSION_MAX_MINUTES,
-          } as any)
-          .eq("id", (active as WorkoutSession).id);
+        const autoEnd = new Date(new Date(active.started_at).getTime() + SESSION_MAX_MINUTES * 60000);
+        try {
+          await supabase
+            .from("workout_sessions")
+            .update({ completed_at: autoEnd.toISOString(), ended_at: autoEnd.toISOString(), duration_minutes: SESSION_MAX_MINUTES } as any)
+            .eq("id", active.id);
+        } catch {/* offline — ignora */}
       } else {
-        setActiveSession(active as WorkoutSession);
+        setActiveSession(active);
       }
     }
 
     // 2. Mesociclo ativo
-    const { data: meso } = await supabase
-      .from("mesocycles")
-      .select("*")
-      .eq("is_active", true)
-      .limit(1)
-      .maybeSingle();
+    const meso = await offlineRead<Mesocycle>(
+      () => supabase.from("mesocycles").select("*").eq("is_active", true).limit(1).maybeSingle(),
+      async () => {
+        if (!offlineDB) return null;
+        const list = await offlineDB.mesocycles.filter((m) => (m as any).is_active === true).toArray();
+        return (list[0] as Mesocycle) ?? null;
+      }
+    );
 
     let templateId: string | null = null;
     if (meso) {
-      const m = meso as Mesocycle;
-      templateId = (m as any).template_id;
-      setActiveMesoId((m as any).id);
-      setActiveMeso(m);
+      templateId = (meso as any).template_id;
+      setActiveMesoId(meso.id);
+      setActiveMeso(meso);
     } else {
-      const { data: tpl } = await supabase
-        .from("templates")
-        .select("id")
-        .eq("is_active", true)
-        .limit(1)
-        .maybeSingle();
-      templateId = (tpl as any)?.id ?? null;
+      const tpl = await offlineRead<{ id: string }>(
+        () => supabase.from("templates").select("id").eq("is_active", true).limit(1).maybeSingle(),
+        async () => {
+          if (!offlineDB) return null;
+          const list = await offlineDB.templates.filter((t) => (t as any).is_active === true).toArray();
+          return list[0] ? { id: list[0].id } : null;
+        }
+      );
+      templateId = tpl?.id ?? null;
     }
 
     // 3. Dia de hoje
     if (templateId) {
       const todayWeekday = new Date().getDay();
-      const { data: dayData } = await supabase
-        .from("template_days")
-        .select("*")
-        .eq("template_id", templateId)
-        .eq("weekday", todayWeekday)
-        .maybeSingle();
-      setTodayDay(dayData as TemplateDay);
+      const dayData = await offlineRead<TemplateDay>(
+        () => supabase.from("template_days").select("*").eq("template_id", templateId!).eq("weekday", todayWeekday).maybeSingle(),
+        async () => {
+          if (!offlineDB) return null;
+          const list = await offlineDB.template_days.where("template_id").equals(templateId!).filter((d) => d.weekday === todayWeekday).toArray();
+          return list[0] ?? null;
+        }
+      );
+      setTodayDay(dayData);
 
       if (dayData) {
-        const { count } = await supabase
-          .from("template_exercises")
-          .select("*", { count: "exact", head: true })
-          .eq("template_day_id", (dayData as TemplateDay).id);
-        setExerciseCount(count ?? 0);
+        try {
+          const { count } = await supabase
+            .from("template_exercises")
+            .select("*", { count: "exact", head: true })
+            .eq("template_day_id", dayData.id);
+          setExerciseCount(count ?? 0);
+        } catch {
+          if (offlineDB) {
+            const n = await offlineDB.template_exercises.where("template_day_id").equals(dayData.id).count();
+            setExerciseCount(n);
+          }
+        }
       }
     }
 
     // 4. Sessões recentes
-    const { data: recent } = await supabase
-      .from("workout_sessions")
-      .select("*, template_days(name)")
-      .not("completed_at", "is", null)
-      .order("session_date", { ascending: false })
-      .limit(10);
+    const recent = await offlineRead<any[]>(
+      () => supabase.from("workout_sessions").select("*, template_days(name)").not("completed_at", "is", null).order("session_date", { ascending: false }).limit(10),
+      async () => {
+        if (!offlineDB) return [];
+        const all = await offlineDB.workout_sessions.filter((s) => s.completed_at != null).toArray();
+        all.sort((a, b) => b.session_date.localeCompare(a.session_date));
+        const top = all.slice(0, 10);
+        // Hidrata day_name via cache
+        return Promise.all(top.map(async (s) => {
+          if (!s.template_day_id) return { ...s, day_name: null };
+          const d = await offlineDB.template_days.get(s.template_day_id);
+          return { ...s, day_name: d?.name ?? null };
+        }));
+      }
+    );
 
-    const enriched = (recent as any[])?.map((r) => ({ ...r, day_name: r.template_days?.name })) ?? [];
+    const enriched = (recent as any[])?.map((r) => ({ ...r, day_name: r.day_name ?? r.template_days?.name })) ?? [];
     setRecentSessions(enriched);
 
     setLoading(false);
