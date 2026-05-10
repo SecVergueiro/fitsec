@@ -271,7 +271,7 @@ export default function SessaoAtivaPage() {
     }, 1000);
   }
 
-  async function handleFinish(energyLevel: number | null, sessionNotes: string) {
+  async function handleFinish(energyLevel: number | null, sessionNotes: string, bodyweightKg: number | null) {
     setShowFinishModal(false);
     const now = new Date().toISOString();
     const start = new Date(session!.started_at).getTime();
@@ -284,6 +284,7 @@ export default function SessaoAtivaPage() {
         duration_minutes: minutes,
         energy_level: energyLevel,
         notes: sessionNotes || null,
+        bodyweight_kg: bodyweightKg,
       } as any)
       .eq("id", sessionId);
     if ("vibrate" in navigator) navigator.vibrate([100, 50, 100, 50, 300]);
@@ -503,7 +504,7 @@ export default function SessaoAtivaPage() {
 
       {showFinishModal && (
         <FinishSessionModal
-          onFinish={handleFinish}
+          onFinish={(energy, notes, bw) => handleFinish(energy, notes, bw)}
           onCancel={() => setShowFinishModal(false)}
         />
       )}
@@ -798,6 +799,18 @@ function ExerciseCard({
               outline: "none",
             }}
           />
+          {/* Calculadora de anilhas inline */}
+          {(() => {
+            const w = parseFloat(weight);
+            if (!w || w <= 20) return null;
+            const hint = calcPlates(w);
+            if (!hint) return null;
+            return (
+              <div className="text-xs mb-2 tabular" style={{ color: "var(--faint)" }}>
+                Barra 20 + {hint} / lado
+              </div>
+            );
+          })()}
           <Button onClick={handleSave} disabled={saving} fullWidth size="sm">
             {saving ? "Salvando..." : "Salvar série"}
           </Button>
@@ -807,6 +820,23 @@ function ExerciseCard({
   );
 }
 
+function calcPlates(targetKg: number): string | null {
+  const perSide = (targetKg - 20) / 2;
+  if (perSide <= 0) return null;
+  const sizes = [20, 15, 10, 5, 2.5, 1.25];
+  const used: string[] = [];
+  let rem = Math.round(perSide * 1000) / 1000;
+  for (const p of sizes) {
+    const n = Math.floor(rem / p + 0.001);
+    if (n > 0) {
+      used.push(`${n}×${p}`);
+      rem = Math.round((rem - n * p) * 1000) / 1000;
+    }
+  }
+  if (rem > 0.01) return null;
+  return used.join(" + ") || null;
+}
+
 // ============================================================
 // Modal de finalização — energia + notas
 // ============================================================
@@ -814,11 +844,12 @@ function FinishSessionModal({
   onFinish,
   onCancel,
 }: {
-  onFinish: (energyLevel: number | null, notes: string) => void;
+  onFinish: (energyLevel: number | null, notes: string, bodyweightKg: number | null) => void;
   onCancel: () => void;
 }) {
   const [energy, setEnergy] = useState<number | null>(null);
   const [notes, setNotes] = useState("");
+  const [bodyweight, setBodyweight] = useState("");
 
   return (
     <div
@@ -863,6 +894,31 @@ function FinishSessionModal({
           </div>
         </div>
 
+        <div className="mb-4">
+          <div
+            className="text-xs font-bold mb-2"
+            style={{ color: "var(--muted)", letterSpacing: "0.08em", textTransform: "uppercase" }}
+          >
+            Peso corporal (opcional)
+          </div>
+          <input
+            type="number"
+            inputMode="decimal"
+            value={bodyweight}
+            onChange={(e) => setBodyweight(e.target.value)}
+            placeholder="kg"
+            step="0.1"
+            className="w-full rounded-lg px-3 py-2.5 text-sm"
+            style={{
+              background: "var(--surface)",
+              border: "0.5px solid var(--border)",
+              color: "var(--text)",
+              outline: "none",
+              minHeight: "44px",
+            }}
+          />
+        </div>
+
         <div className="mb-5">
           <div
             className="text-xs font-bold mb-2"
@@ -874,7 +930,7 @@ function FinishSessionModal({
             value={notes}
             onChange={(e) => setNotes(e.target.value)}
             placeholder="Como foi? O que sentiu?"
-            rows={3}
+            rows={2}
             className="w-full rounded-lg px-3 py-2.5 text-sm resize-none"
             style={{
               background: "var(--surface)",
@@ -887,7 +943,7 @@ function FinishSessionModal({
 
         <div className="flex gap-2">
           <button
-            onClick={() => onFinish(energy, notes)}
+            onClick={() => onFinish(energy, notes, bodyweight ? parseFloat(bodyweight) : null)}
             className="flex-1 py-3 rounded-xl font-bold text-sm cursor-pointer"
             style={{ background: "var(--primary)", color: "var(--background)" }}
           >

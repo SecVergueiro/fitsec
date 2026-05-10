@@ -152,6 +152,47 @@ export default function ResumoPage() {
         </p>
       </div>
 
+      {/* Energia, peso corporal e notas */}
+      {(session.energy_level || session.bodyweight_kg || session.notes) && (
+        <Card className="mb-4">
+          <div className="space-y-3">
+            {session.bodyweight_kg && (
+              <div className="flex items-center justify-between">
+                <span className="text-xs font-bold" style={{ color: "var(--muted)", letterSpacing: "0.08em", textTransform: "uppercase" }}>
+                  Peso corporal
+                </span>
+                <span className="text-sm font-bold tabular">{fmtKg(session.bodyweight_kg)} kg</span>
+              </div>
+            )}
+            {session.energy_level && (
+              <div className="flex items-center justify-between">
+                <span className="text-xs font-bold" style={{ color: "var(--muted)", letterSpacing: "0.08em", textTransform: "uppercase" }}>
+                  Energia
+                </span>
+                <div className="flex gap-1.5">
+                  {[1, 2, 3, 4, 5].map((i) => (
+                    <div
+                      key={i}
+                      className="rounded"
+                      style={{
+                        width: "18px",
+                        height: "18px",
+                        background: i <= session.energy_level! ? "var(--accent)" : "var(--surface-strong)",
+                      }}
+                    />
+                  ))}
+                </div>
+              </div>
+            )}
+            {session.notes && (
+              <p className="text-sm leading-relaxed" style={{ color: "var(--muted)" }}>
+                {session.notes}
+              </p>
+            )}
+          </div>
+        </Card>
+      )}
+
       {/* Grade de estatísticas */}
       <Card variant="strong" className="mb-4">
         <div className="grid grid-cols-2 gap-x-4 gap-y-5">

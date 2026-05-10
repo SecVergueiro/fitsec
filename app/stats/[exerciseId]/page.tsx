@@ -228,6 +228,32 @@ export default function ExerciseStatsPage() {
             </>
           )}
 
+          {/* Zonas de treino baseadas no PR */}
+          <Eyebrow className="mb-2">Zonas de treino</Eyebrow>
+          <Card className="!p-0 mb-5">
+            {[
+              { pct: 95, label: "Força máxima", reps: "1–2" },
+              { pct: 85, label: "Força", reps: "3–5" },
+              { pct: 75, label: "Hipertrofia", reps: "6–10" },
+              { pct: 65, label: "Volume", reps: "10–15" },
+              { pct: 55, label: "Resistência", reps: "15+" },
+            ].map(({ pct, label, reps }, idx, arr) => (
+              <div
+                key={pct}
+                className="px-4 py-2.5 flex justify-between items-center"
+                style={{ borderBottom: idx < arr.length - 1 ? "0.5px solid var(--border)" : "none" }}
+              >
+                <div>
+                  <span className="text-sm font-medium">{label}</span>
+                  <span className="text-xs ml-2" style={{ color: "var(--muted)" }}>{reps} reps</span>
+                </div>
+                <span className="text-sm font-bold tabular" style={{ color: "var(--primary)" }}>
+                  {fmtKg(Math.round(allTimeBest * pct / 100 * 2) / 2)} kg
+                </span>
+              </div>
+            ))}
+          </Card>
+
           {/* Historico detalhado */}
           <Eyebrow className="mb-2">Histórico · {sessionData.length} sessões</Eyebrow>
           <Card className="!p-0">

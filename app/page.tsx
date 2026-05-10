@@ -4,6 +4,7 @@ import { useEffect, useState } from "react";
 import Link from "next/link";
 import { supabase } from "@/lib/supabase";
 import { Card, Eyebrow, Pill } from "@/components/ui";
+import { fmtRelativeDate } from "@/lib/utils";
 import type { Mesocycle, Template, TemplateDay, WorkoutSession } from "@/lib/database.types";
 
 const WEEKDAYS = ["D", "S", "T", "Q", "Q", "S", "S"];
@@ -18,6 +19,7 @@ export default function HomePage() {
   const [weeklyVolume, setWeeklyVolume] = useState<number | null>(null);
   const [streak, setStreak] = useState<number>(0);
   const [heatmapSessions, setHeatmapSessions] = useState<Set<string>>(new Set());
+  const [activeSession, setActiveSession] = useState<{ id: string; started_at: string } | null>(null);
 
   useEffect(() => {
     loadDashboard();
@@ -25,6 +27,16 @@ export default function HomePage() {
 
   async function loadDashboard() {
     setLoading(true);
+
+    // 0. Sessão em andamento
+    const { data: activeSess } = await supabase
+      .from("workout_sessions")
+      .select("id, started_at")
+      .is("completed_at", null)
+      .order("started_at", { ascending: false })
+      .limit(1)
+      .maybeSingle();
+    setActiveSession(activeSess as { id: string; started_at: string } | null);
 
     // 1. Mesociclo ativo
     const { data: mesoData } = await supabase
@@ -141,6 +153,33 @@ export default function HomePage() {
       >
         Boa, Sec.
       </h1>
+
+      {/* Sessão em andamento — aparece se há treino ativo */}
+      {!loading && activeSession && (
+        <Link href={`/sessao/${activeSession.id}`}>
+          <div
+            className="rounded-xl p-4 mb-4 flex items-center justify-between"
+            style={{ border: "0.5px solid var(--accent)", background: "rgba(68, 147, 224, 0.07)" }}
+          >
+            <div>
+              <div
+                className="text-xs font-bold mb-0.5"
+                style={{ color: "var(--accent)", letterSpacing: "0.1em", textTransform: "uppercase" }}
+              >
+                Em andamento
+              </div>
+              <div className="font-bold text-sm">Treino ativo</div>
+              <div className="text-xs mt-0.5" style={{ color: "var(--muted)" }}>
+                {(() => {
+                  const min = Math.floor((Date.now() - new Date(activeSession.started_at).getTime()) / 60000);
+                  return min < 1 ? "Acabou de começar" : `Há ${min} min`;
+                })()}
+              </div>
+            </div>
+            <div className="text-base font-bold" style={{ color: "var(--accent)" }}>→</div>
+          </div>
+        </Link>
+      )}
 
       {/* Treino de hoje */}
       {loading ? (

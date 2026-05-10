@@ -206,13 +206,16 @@ export default function SessaoIndex() {
       ) : (
         <div className="space-y-2">
           {recentSessions.map((s) => (
-            <Link key={s.id} href={`/sessao/${s.id}`}>
+            <Link
+              key={s.id}
+              href={s.completed_at ? `/sessao/${s.id}/resumo` : `/sessao/${s.id}`}
+            >
               <Card className="!p-3 mb-2">
                 <div className="flex justify-between items-center">
                   <div>
                     <div className="font-medium text-sm">{s.day_name ?? "Treino livre"}</div>
                     <div className="text-xs mt-0.5" style={{ color: "var(--muted)" }}>
-                      {new Date(s.session_date).toLocaleDateString("pt-BR")}
+                      {new Date(s.session_date + "T12:00:00").toLocaleDateString("pt-BR", { weekday: "short", day: "numeric", month: "short" })}
                       {s.duration_minutes && ` · ${s.duration_minutes} min`}
                     </div>
                   </div>
@@ -221,6 +224,15 @@ export default function SessaoIndex() {
               </Card>
             </Link>
           ))}
+          {recentSessions.length > 0 && (
+            <Link
+              href="/historico"
+              className="block text-center text-xs font-bold mt-1 py-2"
+              style={{ color: "var(--accent)", minHeight: "auto" }}
+            >
+              Ver histórico completo →
+            </Link>
+          )}
         </div>
       )}
     </div>

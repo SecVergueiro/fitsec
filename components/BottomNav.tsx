@@ -5,8 +5,8 @@ import { usePathname } from "next/navigation";
 
 const TABS = [
   { href: "/", label: "Início", icon: HomeIcon },
-  { href: "/treinos", label: "Treinos", icon: DumbbellIcon },
-  { href: "/biblioteca", label: "Biblio.", icon: BookIcon },
+  { href: "/sessao", label: "Sessão", icon: DumbbellIcon },
+  { href: "/treinos", label: "Treinos", icon: TemplateIcon },
   { href: "/stats", label: "Stats", icon: ChartIcon },
 ];
 
@@ -38,6 +38,7 @@ export function BottomNav() {
               style={{
                 color: active ? "var(--primary)" : "var(--muted)",
                 fontWeight: active ? 700 : 500,
+                minHeight: "auto",
               }}
             >
               <Icon active={active} />
@@ -71,10 +72,13 @@ function DumbbellIcon({ active }: { active: boolean }) {
   );
 }
 
-function BookIcon({ active }: { active: boolean }) {
+function TemplateIcon({ active }: { active: boolean }) {
   return (
     <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={active ? 2.2 : 1.8} strokeLinecap="round" strokeLinejoin="round">
-      <path d="M4 19.5v-15A2.5 2.5 0 0 1 6.5 2H20v20H6.5a2.5 2.5 0 0 1 0-5H20" />
+      <rect x="3" y="3" width="7" height="7" rx="1.5" />
+      <rect x="14" y="3" width="7" height="7" rx="1.5" />
+      <rect x="3" y="14" width="7" height="7" rx="1.5" />
+      <rect x="14" y="14" width="7" height="7" rx="1.5" />
     </svg>
   );
 }

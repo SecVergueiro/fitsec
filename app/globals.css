@@ -92,3 +92,12 @@ button, a[role="button"] {
 .fade-in {
   animation: fadeIn 0.22s cubic-bezier(0.25, 0.46, 0.45, 0.94);
 }
+
+/* Feedback de toque em cards clicáveis dentro de links */
+a > .rounded-xl {
+  transition: opacity 0.1s ease, transform 0.1s ease;
+}
+a:active > .rounded-xl {
+  opacity: 0.68;
+  transform: scale(0.983);
+}
