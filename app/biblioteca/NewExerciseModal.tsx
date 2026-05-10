@@ -47,6 +47,7 @@ export function NewExerciseModal({ onClose, onCreated, existingExercises }: Prop
     setError(null);
     setSaving(true);
 
+    const { data: { user } } = await supabase.auth.getUser();
     const payload: Partial<Exercise> = {
       name: name.trim(),
       primary_muscle: primaryMuscle,
@@ -56,7 +57,8 @@ export function NewExerciseModal({ onClose, onCreated, existingExercises }: Prop
       parent_exercise_id: parentId || null,
       variation_label: parentId ? variationLabel.trim() || null : null,
       secondary_muscles: [],
-    };
+      user_id: user?.id,
+    } as any;
 
     const { error: err } = await supabase.from("exercises").insert(payload);
 

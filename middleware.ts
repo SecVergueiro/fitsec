@@ -1,30 +1,21 @@
 import { NextRequest, NextResponse } from "next/server";
 
-const APP_PASSWORD = process.env.APP_PASSWORD ?? "fitsec";
-const COOKIE_NAME = "app_auth";
-const PUBLIC_PATHS = ["/login", "/public"];
+// Rotas que não precisam de nenhuma verificação (auth feita pelo AuthProvider no cliente)
+const ALWAYS_PUBLIC = ["/login", "/public", "/_next", "/api", "/manifest", "/sw.js", "/icon", "/favicon"];
 
 export function middleware(request: NextRequest) {
   const { pathname } = request.nextUrl;
 
-  // Ignora paths públicos e assets
+  // Arquivos estáticos e rotas sempre públicas passam direto
   if (
-    PUBLIC_PATHS.some((p) => pathname.startsWith(p)) ||
-    pathname.startsWith("/_next") ||
-    pathname.startsWith("/api") ||
+    ALWAYS_PUBLIC.some((p) => pathname.startsWith(p)) ||
     pathname.includes(".")
   ) {
     return NextResponse.next();
   }
 
-  const cookie = request.cookies.get(COOKIE_NAME);
-  if (cookie?.value === APP_PASSWORD) {
-    return NextResponse.next();
-  }
-
-  const loginUrl = new URL("/login", request.url);
-  loginUrl.searchParams.set("from", pathname);
-  return NextResponse.redirect(loginUrl);
+  // Tudo mais passa direto — o AuthProvider no cliente faz o redirect para /login
+  return NextResponse.next();
 }
 
 export const config = {

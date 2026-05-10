@@ -67,9 +67,10 @@ export default function TemplateDetailPage() {
   async function duplicateTemplate() {
     if (!template) return;
     const newName = `${template.name} (cópia)`;
+    const { data: { user } } = await supabase.auth.getUser();
     const { data: newTpl, error } = await supabase
       .from("templates")
-      .insert({ name: newName, description: template.description, split_type: template.split_type, is_active: false } as any)
+      .insert({ name: newName, description: template.description, split_type: template.split_type, is_active: false, user_id: user?.id } as any)
       .select()
       .single();
     if (error || !newTpl) { toast.error("Erro ao duplicar template"); return; }

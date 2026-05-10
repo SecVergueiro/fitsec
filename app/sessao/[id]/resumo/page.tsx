@@ -32,6 +32,9 @@ export default function ResumoPage() {
   const [showEditModal, setShowEditModal] = useState(false);
 
   async function handleShare() {
+    // Marca a sessão como pública antes de compartilhar
+    await supabase.from("workout_sessions").update({ is_public: true } as any).eq("id", sessionId);
+
     const url = `${window.location.origin}/public/sessao/${sessionId}`;
     if (navigator.share) {
       await navigator.share({ title: "Meu treino — FitSec", url }).catch(() => {});

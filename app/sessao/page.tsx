@@ -128,6 +128,7 @@ export default function SessaoIndex() {
     setShowCheckin(false);
     const templateDayId = pendingDayId;
 
+    const { data: { user } } = await supabase.auth.getUser();
     const { data: session, error } = await supabase
       .from("workout_sessions")
       .insert({
@@ -137,6 +138,7 @@ export default function SessaoIndex() {
         started_at: new Date().toISOString(),
         bodyweight_kg: bodyweight,
         energy_level: energy,
+        user_id: user?.id,
       } as any)
       .select()
       .single();

@@ -100,6 +100,7 @@ export default function NovoTemplatePage() {
     setSaving(true);
     setError(null);
 
+    const { data: { user } } = await supabase.auth.getUser();
     const { data, error: err } = await supabase
       .from("templates")
       .insert({
@@ -107,6 +108,7 @@ export default function NovoTemplatePage() {
         description: description.trim() || null,
         split_type: splitType.trim() || null,
         is_active: false,
+        user_id: user?.id,
       } as any)
       .select()
       .single();
@@ -125,6 +127,7 @@ export default function NovoTemplatePage() {
 
     try {
       // 1. Cria template
+      const { data: { user } } = await supabase.auth.getUser();
       const { data: tpl, error: tplErr } = await supabase
         .from("templates")
         .insert({
@@ -132,6 +135,7 @@ export default function NovoTemplatePage() {
           description: UL_PPL_PRESET.description,
           split_type: UL_PPL_PRESET.split_type,
           is_active: true,
+          user_id: user?.id,
         } as any)
         .select()
         .single();

@@ -43,6 +43,7 @@ export default function NovoMesociclo() {
     // Desativa outros mesociclos
     await supabase.from("mesocycles").update({ is_active: false } as any).eq("is_active", true);
 
+    const { data: { user } } = await supabase.auth.getUser();
     const { data, error: err } = await supabase
       .from("mesocycles")
       .insert({
@@ -53,6 +54,7 @@ export default function NovoMesociclo() {
         deload_week: deloadWeek ? parseInt(deloadWeek) : null,
         goal: goal.trim() || null,
         is_active: true,
+        user_id: user?.id,
       } as any)
       .select()
       .single();
