@@ -661,6 +661,8 @@ function ExerciseCard({
     return exercise.rep_range_min ?? 8;
   });
   const [rirNum, setRirNum] = useState<number | null>(null);
+  const [showRir, setShowRir] = useState(false);
+  const [showRirInfo, setShowRirInfo] = useState(false);
   const [isWarmup, setIsWarmup] = useState(false);
   const [isFailure, setIsFailure] = useState(false);
   const [saving, setSaving] = useState(false);
@@ -1213,34 +1215,89 @@ function ExerciseCard({
             </div>
           </div>
 
-          {/* ── RIR ── */}
+          {/* ── RIR (opcional) ── */}
           <div className="mb-4">
-            <div className="text-xs font-bold mb-2" style={{ color: "var(--faint)", letterSpacing: "0.1em", textTransform: "uppercase" }}>RIR</div>
-            <div className="flex gap-1.5">
-              {[
-                { label: "Máx", value: 0 },
-                { label: "1", value: 1 },
-                { label: "2", value: 2 },
-                { label: "3", value: 3 },
-                { label: "4+", value: 4 },
-              ].map(({ label, value }) => (
-                <button
-                  key={value}
-                  onClick={() => setRirNum(rirNum === value ? null : value)}
-                  className="flex-1 rounded-xl font-bold text-xs"
-                  style={{
-                    height: 44,
-                    background: rirNum === value ? "var(--accent)" : "var(--background)",
-                    color: rirNum === value ? "var(--background)" : "var(--muted)",
-                    border: `0.5px solid ${rirNum === value ? "var(--accent)" : "var(--border)"}`,
-                    cursor: "pointer",
-                    transition: "all 0.12s ease",
-                  }}
-                >
-                  {label}
-                </button>
-              ))}
-            </div>
+            {!showRir ? (
+              <button
+                onClick={() => setShowRir(true)}
+                className="w-full rounded-xl text-xs font-bold"
+                style={{
+                  height: 40,
+                  background: "transparent",
+                  border: "0.5px dashed var(--border-strong)",
+                  color: "var(--faint)",
+                  cursor: "pointer",
+                  letterSpacing: "0.06em",
+                  transition: "all 0.12s ease",
+                }}
+              >
+                + Adicionar RIR
+              </button>
+            ) : (
+              <div>
+                {/* Header RIR com ? e fechar */}
+                <div className="flex items-center gap-2 mb-2">
+                  <span className="text-xs font-bold" style={{ color: "var(--faint)", letterSpacing: "0.1em", textTransform: "uppercase" }}>RIR</span>
+                  <button
+                    onClick={() => setShowRirInfo((v) => !v)}
+                    style={{
+                      width: 16, height: 16, minHeight: "auto", borderRadius: "50%",
+                      border: `1px solid ${showRirInfo ? "var(--accent)" : "var(--border-strong)"}`,
+                      background: showRirInfo ? "rgba(68,147,224,0.15)" : "transparent",
+                      color: showRirInfo ? "var(--accent)" : "var(--faint)",
+                      fontSize: 9, fontWeight: 800, cursor: "pointer",
+                      display: "flex", alignItems: "center", justifyContent: "center", flexShrink: 0,
+                    }}
+                  >
+                    ?
+                  </button>
+                  <button
+                    onClick={() => { setShowRir(false); setRirNum(null); setShowRirInfo(false); }}
+                    style={{ marginLeft: "auto", color: "var(--faint)", fontSize: 14, minHeight: "auto", cursor: "pointer", lineHeight: 1 }}
+                  >
+                    ×
+                  </button>
+                </div>
+
+                {/* Card explicativo */}
+                {showRirInfo && (
+                  <div
+                    className="mb-2 px-3 py-2.5 rounded-xl text-xs leading-relaxed"
+                    style={{ background: "rgba(68,147,224,0.06)", border: "0.5px solid rgba(68,147,224,0.2)", color: "var(--muted)" }}
+                  >
+                    <span className="font-bold" style={{ color: "var(--text)" }}>RIR = Reps In Reserve</span> — quantas repetições você ainda conseguiria fazer antes de chegar à falha.{" "}
+                    <span style={{ color: "var(--faint)" }}>Exemplo: terminou com RIR 2 → daria mais 2 reps. O app usa isso para sugerir se deve aumentar ou manter o peso na próxima sessão.</span>
+                  </div>
+                )}
+
+                {/* Pills de seleção */}
+                <div className="flex gap-1.5">
+                  {[
+                    { label: "Máx", value: 0 },
+                    { label: "1", value: 1 },
+                    { label: "2", value: 2 },
+                    { label: "3", value: 3 },
+                    { label: "4+", value: 4 },
+                  ].map(({ label, value }) => (
+                    <button
+                      key={value}
+                      onClick={() => setRirNum(rirNum === value ? null : value)}
+                      className="flex-1 rounded-xl font-bold text-xs"
+                      style={{
+                        height: 44,
+                        background: rirNum === value ? "var(--accent)" : "var(--background)",
+                        color: rirNum === value ? "var(--background)" : "var(--muted)",
+                        border: `0.5px solid ${rirNum === value ? "var(--accent)" : "var(--border)"}`,
+                        cursor: "pointer",
+                        transition: "all 0.12s ease",
+                      }}
+                    >
+                      {label}
+                    </button>
+                  ))}
+                </div>
+              </div>
+            )}
           </div>
 
           {/* Toggles: Aquec + Falha */}
