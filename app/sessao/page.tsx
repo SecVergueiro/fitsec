@@ -357,12 +357,19 @@ function CheckinModal({
 
   return (
     <div
-      className="fixed inset-0 z-50 flex items-end justify-center"
-      style={{ background: "rgba(0,0,0,0.72)", backdropFilter: "blur(8px)" }}
+      className="fixed inset-0 z-50 flex items-center justify-center p-4"
+      style={{ background: "rgba(4,6,7,0.82)", backdropFilter: "blur(10px)" }}
+      onClick={(e) => { if (e.target === e.currentTarget) onSkip(); }}
     >
       <div
-        className="w-full max-w-lg rounded-t-2xl p-6 pb-12 slide-up"
-        style={{ background: "var(--background)", border: "0.5px solid var(--border-strong)", borderBottom: "none" }}
+        className="w-full max-w-sm rounded-2xl p-6 scale-in"
+        style={{
+          background: "var(--background)",
+          border: "0.5px solid var(--border-strong)",
+          maxHeight: "90vh",
+          overflowY: "auto",
+        }}
+        onClick={(e) => e.stopPropagation()}
       >
         <div className="text-center mb-6">
           <h2 className="text-xl font-bold">Check-in</h2>
@@ -438,9 +445,9 @@ function CheckinModal({
         <button
           onClick={onSkip}
           style={{
-            width: "100%", height: 36, background: "transparent",
+            width: "100%", height: 40, background: "transparent",
             color: "var(--muted)", borderRadius: 10, fontWeight: 600,
-            fontSize: 13, border: "none", cursor: "pointer",
+            fontSize: 13, border: "none", cursor: "pointer", minHeight: "auto",
           }}
         >
           Pular check-in

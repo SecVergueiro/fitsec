@@ -96,7 +96,7 @@ button, a[role="button"] {
   to   { transform: rotate(360deg); }
 }
 
-/* Slide de baixo pra cima — modais / bottom sheets */
+/* Slide de baixo pra cima — bottom sheets */
 @keyframes slideUp {
   from { opacity: 0; transform: translateY(32px); }
   to   { opacity: 1; transform: translateY(0); }
@@ -104,6 +104,16 @@ button, a[role="button"] {
 
 .slide-up {
   animation: slideUp 0.22s cubic-bezier(0.25, 0.46, 0.45, 0.94);
+}
+
+/* Scale-in — modais centralizados */
+@keyframes scaleIn {
+  from { opacity: 0; transform: scale(0.96) translateY(8px); }
+  to   { opacity: 1; transform: scale(1) translateY(0); }
+}
+
+.scale-in {
+  animation: scaleIn 0.2s cubic-bezier(0.25, 0.46, 0.45, 0.94);
 }
 
 .fade-in {

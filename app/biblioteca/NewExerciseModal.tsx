@@ -73,7 +73,7 @@ export function NewExerciseModal({ onClose, onCreated, existingExercises }: Prop
   return (
     <div
       onClick={onClose}
-      className="fixed inset-0 z-50 flex items-end sm:items-center justify-center"
+      className="fixed inset-0 z-50 flex items-center justify-center p-4"
       style={{
         background: "rgba(4, 6, 7, 0.7)",
         backdropFilter: "blur(8px)",
@@ -81,13 +81,12 @@ export function NewExerciseModal({ onClose, onCreated, existingExercises }: Prop
     >
       <div
         onClick={(e) => e.stopPropagation()}
-        className="w-full max-w-md rounded-t-2xl sm:rounded-2xl p-5 slide-up"
+        className="w-full max-w-md rounded-2xl p-5 scale-in"
         style={{
           background: "var(--background)",
           border: "0.5px solid var(--border-strong)",
           maxHeight: "90vh",
-          overflow: "auto",
-          paddingBottom: "calc(1.25rem + env(safe-area-inset-bottom))",
+          overflowY: "auto",
         }}
       >
         <div className="flex justify-between items-start mb-4">
