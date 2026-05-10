@@ -450,21 +450,23 @@ function EditSessionModal({
         <label className="block text-xs font-bold mb-2" style={{ color: "var(--muted)", letterSpacing: "0.08em", textTransform: "uppercase" }}>
           Energia
         </label>
-        <div className="flex gap-2 mb-4">
+        <div className="flex gap-1.5 mb-4">
           {[1, 2, 3, 4, 5].map((i) => (
             <button
               key={i}
               onClick={() => setEnergy(energy === i ? null : i)}
-              className="flex-1 py-2 rounded-xl text-xs font-bold flex flex-col items-center gap-0.5"
+              className="flex-1 rounded-xl font-bold flex flex-col items-center justify-center gap-0.5"
               style={{
-                minHeight: "auto",
-                background: energy === i ? `${ENERGY_COLORS[i]}20` : "var(--surface)",
-                border: `0.5px solid ${energy === i ? ENERGY_COLORS[i] : "var(--border)"}`,
+                minHeight: "56px",
+                background: energy === i ? `${ENERGY_COLORS[i]}22` : "var(--surface)",
+                border: `1px solid ${energy === i ? ENERGY_COLORS[i] : "var(--border)"}`,
                 color: energy === i ? ENERGY_COLORS[i] : "var(--muted)",
+                transition: "all 0.15s ease",
+                cursor: "pointer",
               }}
             >
-              <span style={{ fontSize: 16 }}>{i}</span>
-              <span style={{ fontSize: 9 }}>{ENERGY_LABELS[i]}</span>
+              <span style={{ fontSize: 18, fontWeight: 800, lineHeight: 1 }}>{i}</span>
+              <span style={{ fontSize: 8, letterSpacing: "0.04em", opacity: 0.8 }}>{ENERGY_LABELS[i]}</span>
             </button>
           ))}
         </div>

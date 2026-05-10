@@ -593,6 +593,10 @@ export default function SessaoAtivaPage() {
   );
 }
 
+// Energia — labels e cores por nível
+const ENERGY_LABELS = ["", "Péssimo", "Ruim", "Ok", "Bom", "Ótimo"];
+const ENERGY_COLORS = ["", "#ef4444", "#f97316", "#eab308", "#22c55e", "#4493e0"];
+
 // Acento por grupo muscular
 const MUSCLE_ACCENT: Record<string, string> = {
   peito: "#ef4444",
@@ -1425,12 +1429,20 @@ function SessionInfoModal({
         <label className="block text-xs font-bold mb-2" style={{ color: "var(--muted)", letterSpacing: "0.08em", textTransform: "uppercase" }}>
           Energia
         </label>
-        <div className="flex gap-2 mb-4">
+        <div className="flex gap-1.5 mb-4">
           {[1, 2, 3, 4, 5].map((i) => (
             <button key={i} onClick={() => setEnergy(energy === i ? null : i)}
-              className="flex-1 py-2.5 rounded-lg text-sm font-bold"
-              style={{ minHeight: "44px", background: energy === i ? "var(--primary)" : "var(--surface)", color: energy === i ? "var(--background)" : "var(--muted)", border: `0.5px solid ${energy === i ? "var(--primary)" : "var(--border)"}` }}>
-              {i}
+              className="flex-1 rounded-xl font-bold flex flex-col items-center justify-center gap-0.5"
+              style={{
+                minHeight: "56px",
+                background: energy === i ? `${ENERGY_COLORS[i]}22` : "var(--surface)",
+                color: energy === i ? ENERGY_COLORS[i] : "var(--muted)",
+                border: `1px solid ${energy === i ? ENERGY_COLORS[i] : "var(--border)"}`,
+                transition: "all 0.15s ease",
+                cursor: "pointer",
+              }}>
+              <span style={{ fontSize: 18, fontWeight: 800, lineHeight: 1 }}>{i}</span>
+              <span style={{ fontSize: 8, letterSpacing: "0.04em", opacity: 0.8 }}>{ENERGY_LABELS[i]}</span>
             </button>
           ))}
         </div>
@@ -1489,20 +1501,23 @@ function FinishSessionModal({
           >
             Energia
           </div>
-          <div className="flex gap-2">
+          <div className="flex gap-1.5">
             {[1, 2, 3, 4, 5].map((level) => (
               <button
                 key={level}
                 onClick={() => setEnergy(energy === level ? null : level)}
-                className="flex-1 py-2.5 rounded-lg text-sm font-bold"
+                className="flex-1 rounded-xl font-bold flex flex-col items-center justify-center gap-0.5"
                 style={{
-                  background: energy === level ? "var(--primary)" : "var(--surface)",
-                  color: energy === level ? "var(--background)" : "var(--muted)",
-                  border: `0.5px solid ${energy === level ? "var(--primary)" : "var(--border)"}`,
-                  minHeight: "44px",
+                  minHeight: "56px",
+                  background: energy === level ? `${ENERGY_COLORS[level]}22` : "var(--surface)",
+                  color: energy === level ? ENERGY_COLORS[level] : "var(--muted)",
+                  border: `1px solid ${energy === level ? ENERGY_COLORS[level] : "var(--border)"}`,
+                  transition: "all 0.15s ease",
+                  cursor: "pointer",
                 }}
               >
-                {level}
+                <span style={{ fontSize: 18, fontWeight: 800, lineHeight: 1 }}>{level}</span>
+                <span style={{ fontSize: 8, letterSpacing: "0.04em", opacity: 0.8 }}>{ENERGY_LABELS[level]}</span>
               </button>
             ))}
           </div>
