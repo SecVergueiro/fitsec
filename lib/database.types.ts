@@ -153,6 +153,7 @@ export interface UserProfile {
   display_name: string | null;
   weekly_goal: number;
   units: "kg" | "lb";
+  current_bodyweight_kg: number | null;
   rest_overrides: Record<string, number>;
   created_at: string;
   updated_at: string;

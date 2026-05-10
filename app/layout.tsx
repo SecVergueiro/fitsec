@@ -55,8 +55,12 @@ export default function RootLayout({
               <SyncProvider>
                 <OfflineBadge />
                 <main
-                  className="max-w-md mx-auto px-5 pt-6 pb-28"
-                  style={{ minHeight: "100vh" }}
+                  className="max-w-md mx-auto px-5"
+                  style={{
+                    minHeight: "100vh",
+                    paddingTop: "calc(env(safe-area-inset-top, 0px) + 20px)",
+                    paddingBottom: "calc(env(safe-area-inset-bottom, 0px) + 96px)",
+                  }}
                 >
                   {children}
                 </main>

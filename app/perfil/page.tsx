@@ -29,14 +29,25 @@ export default function PerfilPage() {
   const [nameInput, setNameInput] = useState("");
   const [editingGoal, setEditingGoal] = useState(false);
   const [goalInput, setGoalInput] = useState("4");
+  const [editingBW, setEditingBW] = useState(false);
+  const [bwInput, setBwInput] = useState("");
   const [exporting, setExporting] = useState(false);
 
   useEffect(() => {
     if (profile) {
       setNameInput(profile.display_name ?? "");
       setGoalInput(String(profile.weekly_goal));
+      setBwInput(profile.current_bodyweight_kg ? String(profile.current_bodyweight_kg) : "");
     }
   }, [profile]);
+
+  async function saveBW() {
+    const n = parseFloat(bwInput);
+    const value = isNaN(n) || n <= 0 ? null : Math.round(n * 10) / 10;
+    await update({ current_bodyweight_kg: value });
+    setEditingBW(false);
+    toast.success("Peso corporal atualizado");
+  }
 
   useEffect(() => {
     if (!user) return;
@@ -230,6 +241,34 @@ export default function PerfilPage() {
           ) : (
             <button onClick={() => setEditingName(true)} className="flex items-center gap-2 text-sm" style={{ color: "var(--text)", minHeight: "auto" }}>
               <span>{profile?.display_name || "—"}</span>
+              <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" style={{ color: "var(--faint)" }}>
+                <path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7"/>
+                <path d="M18.5 2.5a2.121 2.121 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z"/>
+              </svg>
+            </button>
+          )}
+        </SettingRow>
+
+        <SettingRow label="Peso corporal">
+          {editingBW ? (
+            <div className="flex items-center gap-1.5">
+              <input
+                type="number"
+                inputMode="decimal"
+                value={bwInput}
+                onChange={(e) => setBwInput(e.target.value)}
+                onKeyDown={(e) => { if (e.key === "Enter") saveBW(); if (e.key === "Escape") setEditingBW(false); }}
+                autoFocus
+                step="0.1"
+                placeholder="kg"
+                className="w-20 text-center text-sm font-bold rounded px-1 py-1 tabular"
+                style={{ background: "var(--background)", border: "0.5px solid var(--border-strong)", color: "var(--text)", outline: "none" }}
+              />
+              <button onClick={saveBW} className="text-xs font-bold px-2 py-1 rounded" style={{ background: "var(--primary)", color: "var(--background)", minHeight: "auto" }}>OK</button>
+            </div>
+          ) : (
+            <button onClick={() => setEditingBW(true)} className="flex items-center gap-2 text-sm" style={{ color: "var(--text)", minHeight: "auto" }}>
+              <span className="tabular">{profile?.current_bodyweight_kg ? `${profile.current_bodyweight_kg} kg` : "—"}</span>
               <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" style={{ color: "var(--faint)" }}>
                 <path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7"/>
                 <path d="M18.5 2.5a2.121 2.121 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z"/>

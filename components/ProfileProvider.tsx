@@ -9,6 +9,7 @@ const DEFAULT_PROFILE: Omit<UserProfile, "user_id" | "created_at" | "updated_at"
   display_name: null,
   weekly_goal: 4,
   units: "kg",
+  current_bodyweight_kg: null,
   rest_overrides: {},
 };
 

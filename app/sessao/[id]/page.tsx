@@ -8,6 +8,8 @@ import { Card, Eyebrow, Pill } from "@/components/ui";
 import { Button, EmptyState, Spinner } from "@/components/Button";
 import { useToast, useConfirm } from "@/components/Toast";
 import { fmtTimer, estimate1RM, fmtKg } from "@/lib/utils";
+import { offlineInsert, offlineUpdate, offlineDelete } from "@/lib/offline-writes";
+import { db as offlineDB } from "@/lib/offline-db";
 import type { Exercise, SessionExercise, SessionSet, WorkoutSession } from "@/lib/database.types";
 import { AddExerciseToSessionModal } from "./AddExerciseModal";
 import { SortableList, DragHandle } from "@/components/SortableList";
@@ -64,24 +66,46 @@ export default function SessaoAtivaPage() {
   async function load() {
     setLoading(true);
 
-    const [{ data: sessionData }, { data: mesoData }] = await Promise.all([
-      supabase.from("workout_sessions").select("*").eq("id", sessionId).single(),
-      supabase.from("mesocycles").select("start_date, total_weeks").eq("is_active", true).limit(1).maybeSingle(),
-    ]);
-    setSession(sessionData as WorkoutSession);
+    // Tenta carregar do Supabase; se falhar (offline), cai no IndexedDB
+    let sessionData: WorkoutSession | null = null;
+    let mesoData: any = null;
+    let exData: any[] | null = null;
 
-    if (mesoData) {
-      const start = new Date((mesoData as any).start_date);
-      const diffDays = Math.floor((Date.now() - start.getTime()) / (1000 * 60 * 60 * 24));
-      setMesoWeek(Math.floor(diffDays / 7) + 1);
-      setMesoTotalWeeks((mesoData as any).total_weeks);
+    try {
+      const [sessRes, mesoRes, exRes] = await Promise.all([
+        supabase.from("workout_sessions").select("*").eq("id", sessionId).single(),
+        supabase.from("mesocycles").select("start_date, total_weeks").eq("is_active", true).limit(1).maybeSingle(),
+        supabase.from("session_exercises").select("*, exercise:exercises(*)").eq("session_id", sessionId).order("exercise_order"),
+      ]);
+      sessionData = sessRes.data as WorkoutSession;
+      mesoData = mesoRes.data;
+      exData = exRes.data as any[];
+    } catch {
+      // Offline — usa cache local
+      if (offlineDB) {
+        sessionData = (await offlineDB.workout_sessions.get(sessionId)) ?? null;
+        const meso = await offlineDB.mesocycles.where("is_active").equals(1 as any).first()
+          .catch(() => undefined);
+        mesoData = meso ?? null;
+        const exs = await offlineDB.session_exercises.where("session_id").equals(sessionId).sortBy("exercise_order");
+        // Hidrata o exercise via cache
+        exData = await Promise.all(
+          exs.map(async (e) => ({
+            ...e,
+            exercise: (await offlineDB.exercises.get(e.exercise_id)) ?? null,
+          }))
+        );
+      }
     }
 
-    const { data: exData } = await supabase
-      .from("session_exercises")
-      .select("*, exercise:exercises(*)")
-      .eq("session_id", sessionId)
-      .order("exercise_order");
+    setSession(sessionData);
+
+    if (mesoData) {
+      const start = new Date(mesoData.start_date);
+      const diffDays = Math.floor((Date.now() - start.getTime()) / (1000 * 60 * 60 * 24));
+      setMesoWeek(Math.floor(diffDays / 7) + 1);
+      setMesoTotalWeeks(mesoData.total_weeks);
+    }
 
     if (!exData) {
       setLoading(false);
@@ -90,20 +114,40 @@ export default function SessaoAtivaPage() {
 
     const enriched = await Promise.all(
       (exData as any[]).map(async (ex) => {
-        const { data: sets } = await supabase
-          .from("session_sets")
-          .select("*")
-          .eq("session_exercise_id", ex.id)
-          .order("set_number");
-
-        const { data: prevSets } = await supabase
-          .from("session_sets")
-          .select("weight_kg, reps, rir, session_id")
-          .eq("exercise_id", ex.exercise_id)
-          .eq("is_warmup", false)
-          .neq("session_id", sessionId)
-          .order("performed_at", { ascending: false })
-          .limit(500);
+        let sets: SessionSet[] | null = null;
+        try {
+          const r = await supabase
+            .from("session_sets")
+            .select("*")
+            .eq("session_exercise_id", ex.id)
+            .order("set_number");
+          sets = r.data as SessionSet[];
+        } catch {
+          if (offlineDB) {
+            sets = await offlineDB.session_sets.where("session_exercise_id").equals(ex.id).sortBy("set_number");
+          }
+        }
+        // prevSets pode falhar se estiver offline — best-effort
+        let prevSets: any[] | null = null;
+        try {
+          const r = await supabase
+            .from("session_sets")
+            .select("weight_kg, reps, rir, session_id")
+            .eq("exercise_id", ex.exercise_id)
+            .eq("is_warmup", false)
+            .neq("session_id", sessionId)
+            .order("performed_at", { ascending: false })
+            .limit(500);
+          prevSets = r.data;
+        } catch {
+          if (offlineDB) {
+            const all = await offlineDB.session_sets
+              .where("exercise_id").equals(ex.exercise_id)
+              .filter((s) => !s.is_warmup && s.session_id !== sessionId)
+              .sortBy("performed_at");
+            prevSets = all.reverse();
+          }
+        }
 
         let prevBest: any = undefined;
         let prevSession: ExerciseWithSets["prevSession"] = undefined;
@@ -146,7 +190,7 @@ export default function SessaoAtivaPage() {
     setExercises(reordered);
     await Promise.all(
       reordered.map((e) =>
-        supabase.from("session_exercises").update({ exercise_order: e.exercise_order } as any).eq("id", e.id)
+        offlineUpdate("session_exercises", { exercise_order: e.exercise_order }, { id: e.id }, { localTable: "session_exercises", localId: e.id })
       )
     );
   }
@@ -204,23 +248,25 @@ export default function SessaoAtivaPage() {
     const ex = exercises[exIdx];
     const setNumber = ex.sets.filter((s) => !s.is_warmup).length + (isWarmup ? 0 : 1);
 
-    const { data, error } = await supabase
-      .from("session_sets")
-      .insert({
-        session_id: sessionId,
-        session_exercise_id: ex.id,
-        exercise_id: ex.exercise_id,
-        set_number: isWarmup ? 0 : setNumber,
-        weight_kg: weight,
-        reps,
-        rir,
-        is_warmup: isWarmup,
-        is_failure: isFailure,
-      } as any)
-      .select()
-      .single();
-
-    if (error) {
+    let data: SessionSet;
+    try {
+      data = await offlineInsert(
+        "session_sets",
+        {
+          session_id: sessionId,
+          session_exercise_id: ex.id,
+          exercise_id: ex.exercise_id,
+          set_number: isWarmup ? 0 : setNumber,
+          weight_kg: weight,
+          reps,
+          rir,
+          is_warmup: isWarmup,
+          is_failure: isFailure,
+          performed_at: new Date().toISOString(),
+        },
+        { localTable: "session_sets" }
+      ) as SessionSet;
+    } catch {
       toast.error("Erro ao salvar série");
       return false;
     }
@@ -259,11 +305,12 @@ export default function SessaoAtivaPage() {
   }
 
   async function editSet(exIdx: number, setId: string, weight: number, reps: number, rir: number | null) {
-    const { error } = await supabase
-      .from("session_sets")
-      .update({ weight_kg: weight, reps, rir } as any)
-      .eq("id", setId);
-    if (error) { toast.error("Erro ao editar série"); return; }
+    try {
+      await offlineUpdate("session_sets", { weight_kg: weight, reps, rir }, { id: setId }, { localTable: "session_sets", localId: setId });
+    } catch {
+      toast.error("Erro ao editar série");
+      return;
+    }
     setExercises((prev) => {
       const next = [...prev];
       next[exIdx] = {
@@ -304,7 +351,7 @@ export default function SessaoAtivaPage() {
 
     setTimeout(async () => {
       if (!undone) {
-        await supabase.from("session_sets").delete().eq("id", setId);
+        await offlineDelete("session_sets", { id: setId }, { localTable: "session_sets", localId: setId });
       }
     }, 4500);
   }
@@ -312,7 +359,7 @@ export default function SessaoAtivaPage() {
   async function toggleCompleted(exIdx: number) {
     const ex = exercises[exIdx];
     const newVal = !ex.is_completed;
-    await supabase.from("session_exercises").update({ is_completed: newVal } as any).eq("id", ex.id);
+    await offlineUpdate("session_exercises", { is_completed: newVal }, { id: ex.id }, { localTable: "session_exercises", localId: ex.id });
     setExercises((prev) => {
       const next = [...prev];
       next[exIdx] = { ...next[exIdx], is_completed: newVal };
@@ -344,17 +391,19 @@ export default function SessaoAtivaPage() {
     const now = new Date().toISOString();
     const start = new Date(session!.started_at).getTime();
     const minutes = Math.floor((Date.now() - start) / 60000);
-    await supabase
-      .from("workout_sessions")
-      .update({
+    await offlineUpdate(
+      "workout_sessions",
+      {
         completed_at: now,
         ended_at: now,
         duration_minutes: minutes,
         energy_level: energyLevel,
         notes: sessionNotes || null,
         bodyweight_kg: bodyweightKg,
-      } as any)
-      .eq("id", sessionId);
+      },
+      { id: sessionId },
+      { localTable: "workout_sessions", localId: sessionId }
+    );
     if ("vibrate" in navigator) navigator.vibrate([100, 50, 100, 50, 300]);
     router.push(`/sessao/${sessionId}/resumo`);
   }
@@ -368,7 +417,7 @@ export default function SessaoAtivaPage() {
     });
     if (!ok) return;
 
-    await supabase.from("workout_sessions").delete().eq("id", sessionId);
+    await offlineDelete("workout_sessions", { id: sessionId }, { localTable: "workout_sessions", localId: sessionId });
     router.push("/sessao");
   }
 

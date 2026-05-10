@@ -15,7 +15,7 @@ export function OfflineBadge() {
         style={{
           background: "rgba(239, 68, 68, 0.92)",
           color: "white",
-          padding: "6px 12px",
+          padding: "calc(env(safe-area-inset-top, 0px) + 6px) 12px 6px 12px",
           letterSpacing: "0.06em",
         }}
       >

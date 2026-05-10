@@ -7,6 +7,8 @@ import { supabase } from "@/lib/supabase";
 import { Card, Eyebrow, PageHeader, Pill } from "@/components/ui";
 import { Button, Spinner } from "@/components/Button";
 import { useToast } from "@/components/Toast";
+import { useProfile } from "@/components/ProfileProvider";
+import { offlineInsert } from "@/lib/offline-writes";
 import { fmtRelativeDate, WEEKDAY_LABELS } from "@/lib/utils";
 import type { Mesocycle, TemplateDay, WorkoutSession } from "@/lib/database.types";
 
@@ -15,6 +17,7 @@ const SESSION_MAX_MINUTES = 240;
 export default function SessaoIndex() {
   const router = useRouter();
   const toast = useToast();
+  const { profile } = useProfile();
   const [loading, setLoading] = useState(true);
   const [activeSession, setActiveSession] = useState<WorkoutSession | null>(null);
   const [todayDay, setTodayDay] = useState<TemplateDay | null>(null);
@@ -123,15 +126,18 @@ export default function SessaoIndex() {
     setShowCheckin(true);
   }
 
-  async function confirmCheckin(bodyweight: number | null, energy: number | null) {
+  async function confirmCheckin(energy: number | null) {
     setStarting(true);
     setShowCheckin(false);
     const templateDayId = pendingDayId;
 
     const { data: { user } } = await supabase.auth.getUser();
-    const { data: session, error } = await supabase
-      .from("workout_sessions")
-      .insert({
+    const bodyweight = profile?.current_bodyweight_kg ?? null;
+
+    // Insert offline-first — funciona mesmo sem internet
+    const session = await offlineInsert(
+      "workout_sessions",
+      {
         template_day_id: templateDayId,
         mesocycle_id: activeMesoId,
         session_date: new Date().toLocaleDateString("en-CA"),
@@ -139,38 +145,54 @@ export default function SessaoIndex() {
         bodyweight_kg: bodyweight,
         energy_level: energy,
         user_id: user?.id,
-      } as any)
-      .select()
-      .single();
+      },
+      { localTable: "workout_sessions" }
+    );
 
-    if (error || !session) {
-      toast.error("Erro ao iniciar sessão" + (error?.message ? `: ${error.message}` : ""));
-      setStarting(false);
-      return;
-    }
-
-    const sessionId = (session as any).id;
+    const sessionId = session.id;
 
     if (templateDayId) {
-      const { data: prescribed } = await supabase
-        .from("template_exercises")
-        .select("*")
-        .eq("template_day_id", templateDayId)
-        .order("exercise_order");
+      // Tenta puxar prescrição — se offline, lê do Dexie local
+      let prescribed: any[] | null = null;
+      try {
+        const { data } = await supabase
+          .from("template_exercises")
+          .select("*")
+          .eq("template_day_id", templateDayId)
+          .order("exercise_order");
+        prescribed = data;
+      } catch {
+        // Offline — usa cache local
+        const { db } = await import("@/lib/offline-db");
+        if (db) {
+          prescribed = await db.template_exercises
+            .where("template_day_id")
+            .equals(templateDayId)
+            .sortBy("exercise_order");
+        }
+      }
 
       if (prescribed && prescribed.length > 0) {
-        const sessionExercises = (prescribed as any[]).map((p) => ({
-          session_id: sessionId,
-          exercise_id: p.exercise_id,
-          template_exercise_id: p.id,
-          exercise_order: p.exercise_order,
-          prescribed_sets: p.prescribed_sets,
-          rep_range_min: p.rep_range_min,
-          rep_range_max: p.rep_range_max,
-          target_rir: p.target_rir,
-          rest_seconds: p.rest_seconds,
-        }));
-        await supabase.from("session_exercises").insert(sessionExercises as any);
+        await Promise.all(
+          prescribed.map((p) =>
+            offlineInsert(
+              "session_exercises",
+              {
+                session_id: sessionId,
+                exercise_id: p.exercise_id,
+                template_exercise_id: p.id,
+                exercise_order: p.exercise_order,
+                prescribed_sets: p.prescribed_sets,
+                rep_range_min: p.rep_range_min,
+                rep_range_max: p.rep_range_max,
+                target_rir: p.target_rir,
+                rest_seconds: p.rest_seconds,
+                is_completed: false,
+              },
+              { localTable: "session_exercises" }
+            )
+          )
+        );
       }
     }
 
@@ -327,7 +349,7 @@ export default function SessaoIndex() {
       {showCheckin && (
         <CheckinModal
           onConfirm={confirmCheckin}
-          onSkip={() => confirmCheckin(null, null)}
+          onSkip={() => confirmCheckin(null)}
         />
       )}
     </div>
@@ -344,15 +366,13 @@ function CheckinModal({
   onConfirm,
   onSkip,
 }: {
-  onConfirm: (bodyweight: number | null, energy: number | null) => void;
+  onConfirm: (energy: number | null) => void;
   onSkip: () => void;
 }) {
-  const [bodyweight, setBodyweight] = useState("");
   const [energy, setEnergy] = useState<number | null>(null);
 
   function handleConfirm() {
-    const bw = bodyweight.trim() !== "" ? parseFloat(bodyweight) : null;
-    onConfirm(bw && bw > 0 ? bw : null, energy);
+    onConfirm(energy);
   }
 
   return (
@@ -372,42 +392,16 @@ function CheckinModal({
         onClick={(e) => e.stopPropagation()}
       >
         <div className="text-center mb-6">
-          <h2 className="text-xl font-bold">Check-in</h2>
+          <h2 className="text-xl font-bold">Como você está?</h2>
           <p className="text-sm mt-1" style={{ color: "var(--muted)" }}>
-            Registre seu estado antes de treinar
+            Registre sua energia antes de treinar
           </p>
-        </div>
-
-        {/* Peso corporal */}
-        <div className="mb-5">
-          <div className="text-xs font-bold mb-2" style={{ color: "var(--muted)", letterSpacing: "0.1em", textTransform: "uppercase" }}>
-            Peso corporal (kg)
-          </div>
-          <input
-            type="number"
-            inputMode="decimal"
-            placeholder="Ex: 80"
-            value={bodyweight}
-            onChange={(e) => setBodyweight(e.target.value)}
-            style={{
-              width: "100%",
-              textAlign: "center",
-              fontWeight: 700,
-              fontSize: 28,
-              background: "var(--surface)",
-              border: "0.5px solid var(--border-strong)",
-              borderRadius: 12,
-              height: 64,
-              color: "var(--text)",
-              outline: "none",
-            }}
-          />
         </div>
 
         {/* Nível de energia */}
         <div className="mb-6">
           <div className="text-xs font-bold mb-2" style={{ color: "var(--muted)", letterSpacing: "0.1em", textTransform: "uppercase" }}>
-            Como você está?
+            Energia
           </div>
           <div style={{ display: "flex", gap: "8px" }}>
             {[1, 2, 3, 4, 5].map((n) => (
