@@ -130,10 +130,7 @@ export default function StatsPage() {
     const recent = stats
       .map((s) => s.pr)
       .filter(Boolean)
-      .sort(
-        (a, b) =>
-          new Date(b!.performed_at).getTime() - new Date(a!.performed_at).getTime()
-      )
+      .sort((a, b) => (b!.e1rm) - (a!.e1rm))
       .slice(0, 5) as PersonalRecord[];
     setRecentPRs(recent);
 
@@ -256,7 +253,7 @@ export default function StatsPage() {
           {/* Melhores PRs */}
           {recentPRs.length > 0 && (
             <>
-              <Eyebrow className="mb-2">Melhores PRs</Eyebrow>
+              <Eyebrow className="mb-2">Top 5 e1RM</Eyebrow>
               <Card className="!p-0 mb-5">
                 {recentPRs.map((pr, idx) => (
                   <Link key={pr.exercise_id} href={`/stats/${pr.exercise_id}`}>

@@ -39,17 +39,23 @@ export default function SessaoAtivaPage() {
 
   useEffect(() => {
     load();
+    return () => {
+      if (restRef.current) clearInterval(restRef.current);
+    };
+  }, [sessionId]);
+
+  useEffect(() => {
+    if (elapsedRef.current) clearInterval(elapsedRef.current);
+    if (!session?.started_at || session.completed_at) return;
+    const start = new Date(session.started_at).getTime();
+    setElapsed(Math.floor((Date.now() - start) / 1000));
     elapsedRef.current = setInterval(() => {
-      if (session?.started_at && !session.completed_at) {
-        const start = new Date(session.started_at).getTime();
-        setElapsed(Math.floor((Date.now() - start) / 1000));
-      }
+      setElapsed(Math.floor((Date.now() - start) / 1000));
     }, 1000);
     return () => {
       if (elapsedRef.current) clearInterval(elapsedRef.current);
-      if (restRef.current) clearInterval(restRef.current);
     };
-  }, [sessionId, session?.started_at, session?.completed_at]);
+  }, [session?.started_at, session?.completed_at]);
 
   async function load() {
     setLoading(true);
@@ -87,7 +93,7 @@ export default function SessaoAtivaPage() {
           .eq("is_warmup", false)
           .neq("session_id", sessionId)
           .order("performed_at", { ascending: false })
-          .limit(50);
+          .limit(500);
 
         let prevBest: any = undefined;
         let prevSession: ExerciseWithSets["prevSession"] = undefined;
@@ -525,6 +531,7 @@ function ExerciseCard({
       if (lastSet.rir != null && !rir) setRir(String(lastSet.rir));
     } else if (!lastSet && exercise.prevBest && !weight) {
       setWeight(String(exercise.prevBest.weight));
+      if (!reps) setReps(String(exercise.prevBest.reps));
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [exercise.sets.length]);

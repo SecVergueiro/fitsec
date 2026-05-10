@@ -96,7 +96,7 @@ export default function SessaoIndex() {
       .insert({
         template_day_id: templateDayId,
         mesocycle_id: activeMesoId,
-        session_date: new Date().toISOString().slice(0, 10),
+        session_date: new Date().toLocaleDateString("en-CA"),
         started_at: new Date().toISOString(),
       } as any)
       .select()

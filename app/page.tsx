@@ -60,7 +60,7 @@ export default function HomePage() {
     }
 
     // 3. Dia de hoje (baseado em weekday)
-    const todayWeekday = new Date().getDay() === 0 ? 7 : new Date().getDay();
+    const todayWeekday = new Date().getDay();
     if (templateId) {
       const { data: dayData } = await supabase
         .from("template_days")
