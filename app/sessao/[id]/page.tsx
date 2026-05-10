@@ -34,6 +34,9 @@ export default function SessaoAtivaPage() {
   const [restTotal, setRestTotal] = useState<number>(0);
   const [showAddExercise, setShowAddExercise] = useState(false);
   const [showFinishModal, setShowFinishModal] = useState(false);
+  const [showSessionInfo, setShowSessionInfo] = useState(false);
+  const [mesoWeek, setMesoWeek] = useState<number | null>(null);
+  const [mesoTotalWeeks, setMesoTotalWeeks] = useState<number | null>(null);
   const restRef = useRef<NodeJS.Timeout | null>(null);
   const elapsedRef = useRef<NodeJS.Timeout | null>(null);
 
@@ -60,12 +63,18 @@ export default function SessaoAtivaPage() {
   async function load() {
     setLoading(true);
 
-    const { data: sessionData } = await supabase
-      .from("workout_sessions")
-      .select("*")
-      .eq("id", sessionId)
-      .single();
+    const [{ data: sessionData }, { data: mesoData }] = await Promise.all([
+      supabase.from("workout_sessions").select("*").eq("id", sessionId).single(),
+      supabase.from("mesocycles").select("start_date, total_weeks").eq("is_active", true).limit(1).maybeSingle(),
+    ]);
     setSession(sessionData as WorkoutSession);
+
+    if (mesoData) {
+      const start = new Date((mesoData as any).start_date);
+      const diffDays = Math.floor((Date.now() - start.getTime()) / (1000 * 60 * 60 * 24));
+      setMesoWeek(Math.floor(diffDays / 7) + 1);
+      setMesoTotalWeeks((mesoData as any).total_weeks);
+    }
 
     const { data: exData } = await supabase
       .from("session_exercises")
@@ -130,6 +139,18 @@ export default function SessaoAtivaPage() {
     setLoading(false);
   }
 
+  async function moveExercise(idx: number, dir: "up" | "down") {
+    const target = dir === "up" ? idx - 1 : idx + 1;
+    if (target < 0 || target >= exercises.length) return;
+    const next = [...exercises];
+    [next[idx], next[target]] = [next[target], next[idx]];
+    setExercises(next);
+    await Promise.all([
+      supabase.from("session_exercises").update({ exercise_order: target } as any).eq("id", next[target].id),
+      supabase.from("session_exercises").update({ exercise_order: idx } as any).eq("id", next[idx].id),
+    ]);
+  }
+
   async function addSet(
     exIdx: number,
     weight: number,
@@ -186,8 +207,10 @@ export default function SessaoAtivaPage() {
       return next;
     });
 
-    if (!isWarmup && ex.rest_seconds) {
-      startRestTimer(ex.rest_seconds);
+    if (!isWarmup) {
+      const savedRest = typeof window !== "undefined" ? localStorage.getItem(`rest_${ex.exercise_id}`) : null;
+      const restSecs = savedRest ? parseInt(savedRest) : (ex.rest_seconds ?? 0);
+      if (restSecs > 0) startRestTimer(restSecs);
     }
 
     return true;
@@ -323,7 +346,7 @@ export default function SessaoAtivaPage() {
           className="text-xs font-medium block mb-4"
           style={{ color: "var(--muted)", minHeight: "auto" }}
         >
-          ← Sessão
+          ← Treinos
         </Link>
         <EmptyState
           title="Sessão não encontrada"
@@ -357,13 +380,21 @@ export default function SessaoAtivaPage() {
         }}
       >
         <div className="flex justify-between items-center py-3">
-          <Link
-            href="/sessao"
-            className="text-xs font-medium"
-            style={{ color: "var(--muted)", minHeight: "auto" }}
-          >
-            ← Sessão
-          </Link>
+          <div className="flex items-center gap-3">
+            <Link href="/sessao" className="text-xs font-medium" style={{ color: "var(--muted)", minHeight: "auto" }}>
+              ← Treinos
+            </Link>
+            {!isCompleted && (
+              <button
+                onClick={() => setShowSessionInfo(true)}
+                className="text-xs font-medium"
+                style={{ color: "var(--faint)", minHeight: "auto" }}
+                title="Dados da sessão"
+              >
+                📋
+              </button>
+            )}
+          </div>
           <div className="flex items-center gap-3">
             <div
               className="text-sm font-bold tabular"
@@ -467,6 +498,10 @@ export default function SessaoAtivaPage() {
               onEditSet={(setId, weight, reps, rir) => editSet(idx, setId, weight, reps, rir)}
               onDeleteSet={(setId) => deleteSet(idx, setId)}
               onToggleCompleted={() => toggleCompleted(idx)}
+              onMoveUp={!isCompleted && idx > 0 ? () => moveExercise(idx, "up") : undefined}
+              onMoveDown={!isCompleted && idx < exercises.length - 1 ? () => moveExercise(idx, "down") : undefined}
+              mesoWeek={mesoWeek}
+              mesoTotalWeeks={mesoTotalWeeks}
             />
           ))}
         </div>
@@ -520,6 +555,17 @@ export default function SessaoAtivaPage() {
         </button>
       )}
 
+      {showSessionInfo && session && (
+        <SessionInfoModal
+          session={session}
+          onClose={() => setShowSessionInfo(false)}
+          onSaved={(updated) => {
+            setSession(updated);
+            setShowSessionInfo(false);
+          }}
+        />
+      )}
+
       {showAddExercise && (
         <AddExerciseToSessionModal
           sessionId={sessionId}
@@ -555,6 +601,10 @@ function ExerciseCard({
   onEditSet,
   onDeleteSet,
   onToggleCompleted,
+  onMoveUp,
+  onMoveDown,
+  mesoWeek,
+  mesoTotalWeeks,
 }: {
   exercise: ExerciseWithSets;
   isActive: boolean;
@@ -565,6 +615,10 @@ function ExerciseCard({
   onEditSet: (setId: string, weight: number, reps: number, rir: number | null) => void;
   onDeleteSet: (setId: string) => void;
   onToggleCompleted: () => void;
+  onMoveUp?: () => void;
+  onMoveDown?: () => void;
+  mesoWeek?: number | null;
+  mesoTotalWeeks?: number | null;
 }) {
   const toast = useToast();
   const [weight, setWeight] = useState("");
@@ -583,7 +637,21 @@ function ExerciseCard({
   const [localRepMin, setLocalRepMin] = useState(exercise.rep_range_min ?? 8);
   const [localRepMax, setLocalRepMax] = useState(exercise.rep_range_max ?? 12);
   const [localRIR, setLocalRIR] = useState(exercise.target_rir ?? 2);
-  const [localRest, setLocalRest] = useState(exercise.rest_seconds ?? 90);
+  const [localRest, setLocalRest] = useState(() => {
+    if (typeof window !== "undefined") {
+      const saved = localStorage.getItem(`rest_${exercise.exercise_id}`);
+      if (saved) return parseInt(saved);
+    }
+    return exercise.rest_seconds ?? 90;
+  });
+
+  function adjustRest(delta: number) {
+    const next = Math.max(15, localRest + delta);
+    setLocalRest(next);
+    if (typeof window !== "undefined") {
+      localStorage.setItem(`rest_${exercise.exercise_id}`, String(next));
+    }
+  }
 
   async function savePrescription() {
     await supabase.from("session_exercises").update({
@@ -596,15 +664,31 @@ function ExerciseCard({
     setEditingPrescription(false);
   }
 
-  // Sugestão de carga baseada na sessão anterior
+  // Sugestão de carga — RIR-based + meso-aware
   const loadSuggestion = (() => {
     const prev = exercise.prevSession;
     if (!prev || prev.sets.length === 0) return null;
+    const base = prev.maxWeight;
+
+    // Deload: mesociclo na última semana
+    if (mesoWeek && mesoTotalWeeks && mesoWeek >= mesoTotalWeeks) {
+      const deloadKg = Math.round((base * 0.7) / 2.5) * 2.5;
+      return { kg: deloadKg, tip: `Sem ${mesoWeek}/${mesoTotalWeeks} · deload → −30% carga` };
+    }
+
     const withRIR = prev.sets.filter((s) => s.rir != null);
     const avgRIR = withRIR.length > 0
       ? withRIR.reduce((sum, s) => sum + s.rir!, 0) / withRIR.length
       : null;
-    const base = prev.maxWeight;
+
+    // Intensificação: segunda metade do meso — prioriza peso sobre volume
+    if (mesoWeek && mesoTotalWeeks && mesoWeek > Math.ceil(mesoTotalWeeks / 2)) {
+      if (avgRIR !== null && avgRIR >= 1) {
+        return { kg: base + 2.5, tip: `Sem ${mesoWeek}/${mesoTotalWeeks} · intensificação → +2.5 kg` };
+      }
+      return { kg: base, tip: `Sem ${mesoWeek}/${mesoTotalWeeks} · intensificação → manter` };
+    }
+
     if (avgRIR === null) return null;
     if (avgRIR >= 2) return { kg: base + 2.5, tip: `RIR médio ${avgRIR.toFixed(1)} → progredir` };
     if (avgRIR >= 1) return { kg: base + 1.25, tip: `RIR médio ${avgRIR.toFixed(1)} → progressão leve` };
@@ -777,25 +861,45 @@ function ExerciseCard({
             </div>
           )}
         </div>
-        {!isReadOnly && (
-          <button
-            onClick={(e) => {
-              e.stopPropagation();
-              onToggleCompleted();
-            }}
-            className="rounded-md flex-shrink-0 flex items-center justify-center"
-            style={{
-              width: "28px",
-              height: "28px",
-              minHeight: "28px",
-              background: isCompleted ? "var(--primary)" : "var(--surface)",
-              color: isCompleted ? "var(--background)" : "var(--muted)",
-              border: "0.5px solid var(--border-strong)",
-            }}
-          >
-            ✓
-          </button>
-        )}
+        <div className="flex items-center gap-1 flex-shrink-0">
+          {!isReadOnly && (onMoveUp || onMoveDown) && (
+            <div className="flex flex-col gap-0.5">
+              <button
+                onClick={(e) => { e.stopPropagation(); onMoveUp?.(); }}
+                disabled={!onMoveUp}
+                style={{ color: onMoveUp ? "var(--faint)" : "transparent", fontSize: 10, minHeight: "auto", lineHeight: 1, padding: "2px" }}
+              >
+                ▲
+              </button>
+              <button
+                onClick={(e) => { e.stopPropagation(); onMoveDown?.(); }}
+                disabled={!onMoveDown}
+                style={{ color: onMoveDown ? "var(--faint)" : "transparent", fontSize: 10, minHeight: "auto", lineHeight: 1, padding: "2px" }}
+              >
+                ▼
+              </button>
+            </div>
+          )}
+          {!isReadOnly && (
+            <button
+              onClick={(e) => {
+                e.stopPropagation();
+                onToggleCompleted();
+              }}
+              className="rounded-md flex items-center justify-center"
+              style={{
+                width: "28px",
+                height: "28px",
+                minHeight: "28px",
+                background: isCompleted ? "var(--primary)" : "var(--surface)",
+                color: isCompleted ? "var(--background)" : "var(--muted)",
+                border: "0.5px solid var(--border-strong)",
+              }}
+            >
+              ✓
+            </button>
+          )}
+        </div>
       </div>
 
       {/* Séries registradas */}
@@ -1039,6 +1143,14 @@ function ExerciseCard({
             );
           })()}
 
+          {/* Descanso por exercício */}
+          <div className="flex items-center gap-2 mb-2" onClick={(e) => e.stopPropagation()}>
+            <span className="text-xs" style={{ color: "var(--faint)" }}>Descanso:</span>
+            <button onClick={() => adjustRest(-30)} style={{ color: "var(--faint)", fontSize: 11, minHeight: "auto", padding: "2px 6px", border: "0.5px solid var(--border)", borderRadius: 6 }}>−30s</button>
+            <span className="text-xs font-bold tabular" style={{ color: "var(--muted)" }}>{fmtTimer(localRest)}</span>
+            <button onClick={() => adjustRest(30)} style={{ color: "var(--faint)", fontSize: 11, minHeight: "auto", padding: "2px 6px", border: "0.5px solid var(--border)", borderRadius: 6 }}>+30s</button>
+          </div>
+
           <Button onClick={handleSave} disabled={saving} fullWidth size="sm">
             {saving ? "Salvando..." : isWarmup ? "Salvar aquecimento" : "Salvar série"}
           </Button>
@@ -1063,6 +1175,83 @@ function calcPlates(targetKg: number): string | null {
   }
   if (rem > 0.01) return null;
   return used.join(" + ") || null;
+}
+
+// ============================================================
+// Modal de dados da sessão (mid-session)
+// ============================================================
+function SessionInfoModal({
+  session,
+  onClose,
+  onSaved,
+}: {
+  session: WorkoutSession;
+  onClose: () => void;
+  onSaved: (updated: WorkoutSession) => void;
+}) {
+  const [energy, setEnergy] = useState<number | null>(session.energy_level ?? null);
+  const [notes, setNotes] = useState(session.notes ?? "");
+  const [bodyweight, setBodyweight] = useState(session.bodyweight_kg ? String(session.bodyweight_kg) : "");
+  const [saving, setSaving] = useState(false);
+
+  async function save() {
+    setSaving(true);
+    const bw = bodyweight ? parseFloat(bodyweight) : null;
+    const { data } = await supabase
+      .from("workout_sessions")
+      .update({ energy_level: energy, notes: notes.trim() || null, bodyweight_kg: bw && bw > 0 ? bw : null } as any)
+      .eq("id", session.id)
+      .select()
+      .single();
+    setSaving(false);
+    if (data) onSaved(data as WorkoutSession);
+  }
+
+  return (
+    <div className="fixed inset-0 z-50 flex items-end justify-center" style={{ background: "rgba(0,0,0,0.6)", backdropFilter: "blur(8px)" }}
+      onClick={(e) => { if (e.target === e.currentTarget) onClose(); }}>
+      <div className="w-full max-w-md rounded-t-2xl p-5 fade-in"
+        style={{ background: "var(--background)", border: "0.5px solid var(--border-strong)", paddingBottom: "calc(1.25rem + env(safe-area-inset-bottom))" }}>
+        <div className="flex justify-between items-center mb-4">
+          <h2 className="text-base font-bold">Dados da sessão</h2>
+          <button onClick={onClose} style={{ color: "var(--muted)", minHeight: "auto" }}>✕</button>
+        </div>
+
+        <label className="block text-xs font-bold mb-1" style={{ color: "var(--muted)", letterSpacing: "0.08em", textTransform: "uppercase" }}>
+          Peso corporal (kg)
+        </label>
+        <input type="number" inputMode="decimal" value={bodyweight} onChange={(e) => setBodyweight(e.target.value)}
+          placeholder="Ex: 80.5" step="0.1"
+          className="w-full rounded-lg px-3 py-2.5 text-sm mb-4 text-center font-bold"
+          style={{ background: "var(--surface)", border: "0.5px solid var(--border)", color: "var(--text)", outline: "none" }} />
+
+        <label className="block text-xs font-bold mb-2" style={{ color: "var(--muted)", letterSpacing: "0.08em", textTransform: "uppercase" }}>
+          Energia
+        </label>
+        <div className="flex gap-2 mb-4">
+          {[1, 2, 3, 4, 5].map((i) => (
+            <button key={i} onClick={() => setEnergy(energy === i ? null : i)}
+              className="flex-1 py-2.5 rounded-lg text-sm font-bold"
+              style={{ minHeight: "44px", background: energy === i ? "var(--primary)" : "var(--surface)", color: energy === i ? "var(--background)" : "var(--muted)", border: `0.5px solid ${energy === i ? "var(--primary)" : "var(--border)"}` }}>
+              {i}
+            </button>
+          ))}
+        </div>
+
+        <label className="block text-xs font-bold mb-1" style={{ color: "var(--muted)", letterSpacing: "0.08em", textTransform: "uppercase" }}>
+          Notas
+        </label>
+        <textarea value={notes} onChange={(e) => setNotes(e.target.value)} rows={2}
+          placeholder="Como está o treino?"
+          className="w-full rounded-lg px-3 py-2.5 text-sm mb-4 resize-none"
+          style={{ background: "var(--surface)", border: "0.5px solid var(--border)", color: "var(--text)", outline: "none" }} />
+
+        <Button fullWidth onClick={save} disabled={saving}>
+          {saving ? "Salvando..." : "Salvar"}
+        </Button>
+      </div>
+    </div>
+  );
 }
 
 // ============================================================

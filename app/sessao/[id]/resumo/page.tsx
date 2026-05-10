@@ -31,6 +31,16 @@ export default function ResumoPage() {
   const [loading, setLoading] = useState(true);
   const [showEditModal, setShowEditModal] = useState(false);
 
+  async function handleShare() {
+    const url = `${window.location.origin}/public/sessao/${sessionId}`;
+    if (navigator.share) {
+      await navigator.share({ title: "Meu treino — FitSec", url }).catch(() => {});
+    } else {
+      await navigator.clipboard.writeText(url).catch(() => {});
+      alert("Link copiado!");
+    }
+  }
+
   async function handleDelete() {
     const ok = await confirm({
       title: "Apagar treino?",
@@ -144,6 +154,9 @@ export default function ResumoPage() {
 
   return (
     <div className="fade-in">
+      <Link href="/historico" className="text-xs font-medium block mb-3" style={{ color: "var(--muted)", minHeight: "auto" }}>
+        ← Histórico
+      </Link>
       {/* Cabeçalho de conclusão */}
       <div className="text-center pt-4 pb-6">
         <div
@@ -332,6 +345,17 @@ export default function ResumoPage() {
           style={{ background: "var(--surface-strong)", color: "var(--primary)", border: "0.5px solid var(--border-strong)", minHeight: "44px" }}
         >
           Editar
+        </button>
+        <button
+          onClick={handleShare}
+          className="rounded-lg font-bold text-sm px-3"
+          style={{ background: "var(--surface-strong)", color: "var(--muted)", border: "0.5px solid var(--border)", minHeight: "44px" }}
+          title="Compartilhar"
+        >
+          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+            <circle cx="18" cy="5" r="3" /><circle cx="6" cy="12" r="3" /><circle cx="18" cy="19" r="3" />
+            <line x1="8.59" y1="13.51" x2="15.42" y2="17.49" /><line x1="15.41" y1="6.51" x2="8.59" y2="10.49" />
+          </svg>
         </button>
       </div>
 

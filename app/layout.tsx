@@ -2,6 +2,7 @@ import type { Metadata, Viewport } from "next";
 import "./globals.css";
 import { BottomNav } from "@/components/BottomNav";
 import { Providers } from "@/components/Providers";
+import { SWRegister } from "@/components/SWRegister";
 
 export const metadata: Metadata = {
   title: "FitSec",
@@ -30,6 +31,7 @@ export default function RootLayout({
   return (
     <html lang="pt-BR">
       <body>
+        <SWRegister />
         <Providers>
           <main
             className="max-w-md mx-auto px-5 pt-6 pb-28"

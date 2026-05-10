@@ -30,13 +30,30 @@ export default function HomePage() {
   const [streak, setStreak] = useState<number>(0);
   const [heatmapSessions, setHeatmapSessions] = useState<Set<string>>(new Set());
   const [activeSession, setActiveSession] = useState<{ id: string; started_at: string } | null>(null);
+  const [weeklyGoal, setWeeklyGoal] = useState<number>(4);
+  const [editingGoal, setEditingGoal] = useState(false);
+  const [goalInput, setGoalInput] = useState("4");
 
   useEffect(() => {
     loadDashboard();
     const saved = localStorage.getItem("user_name") ?? "";
     setUserName(saved);
     setNameInput(saved);
+    const savedGoal = localStorage.getItem("weekly_goal");
+    if (savedGoal) {
+      const n = parseInt(savedGoal);
+      setWeeklyGoal(n);
+      setGoalInput(String(n));
+    }
   }, []);
+
+  function saveGoal() {
+    const n = Math.max(1, Math.min(14, parseInt(goalInput) || 4));
+    setWeeklyGoal(n);
+    setGoalInput(String(n));
+    localStorage.setItem("weekly_goal", String(n));
+    setEditingGoal(false);
+  }
 
   function saveName() {
     const n = nameInput.trim();
@@ -313,6 +330,54 @@ export default function HomePage() {
                 : "dias seguidos"}
             </div>
           </Card>
+        </div>
+      )}
+
+      {/* Meta semanal */}
+      {!loading && (
+        <div
+          className="rounded-xl px-4 py-3 mb-4 mt-1"
+          style={{ background: "var(--surface)", border: "0.5px solid var(--border)" }}
+        >
+          <div className="flex items-center justify-between mb-2">
+            <div className="flex items-center gap-2">
+              <span className="text-xs font-bold" style={{ color: "var(--muted)", letterSpacing: "0.08em", textTransform: "uppercase" }}>
+                Meta semanal
+              </span>
+              <span className="text-sm font-bold" style={{ color: weekSessions.filter((s) => s.completed_at).length >= weeklyGoal ? "var(--accent)" : "var(--primary)" }}>
+                {weekSessions.filter((s) => s.completed_at).length} / {weeklyGoal}
+              </span>
+            </div>
+            {editingGoal ? (
+              <div className="flex items-center gap-1.5">
+                <input
+                  type="number"
+                  value={goalInput}
+                  onChange={(e) => setGoalInput(e.target.value)}
+                  onKeyDown={(e) => { if (e.key === "Enter") saveGoal(); if (e.key === "Escape") setEditingGoal(false); }}
+                  autoFocus
+                  min={1} max={14}
+                  className="w-10 text-center text-xs font-bold rounded px-1 py-1"
+                  style={{ background: "var(--background)", border: "0.5px solid var(--border-strong)", color: "var(--text)", outline: "none" }}
+                />
+                <button onClick={saveGoal} className="text-xs font-bold px-2 py-1 rounded" style={{ background: "var(--primary)", color: "var(--background)", minHeight: "auto" }}>OK</button>
+              </div>
+            ) : (
+              <button onClick={() => { setGoalInput(String(weeklyGoal)); setEditingGoal(true); }} style={{ color: "var(--faint)", fontSize: 12, minHeight: "auto" }}>✎</button>
+            )}
+          </div>
+          <div className="h-1.5 rounded-full overflow-hidden" style={{ background: "var(--surface-strong)" }}>
+            <div
+              className="h-full rounded-full transition-all duration-500"
+              style={{
+                width: `${Math.min(100, (weekSessions.filter((s) => s.completed_at).length / weeklyGoal) * 100)}%`,
+                background: weekSessions.filter((s) => s.completed_at).length >= weeklyGoal ? "var(--accent)" : "var(--primary)",
+              }}
+            />
+          </div>
+          {weekSessions.filter((s) => s.completed_at).length >= weeklyGoal && (
+            <div className="text-xs mt-1.5 font-medium" style={{ color: "var(--accent)" }}>Meta atingida! 🎯</div>
+          )}
         </div>
       )}
 

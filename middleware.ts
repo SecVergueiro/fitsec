@@ -2,7 +2,7 @@ import { NextRequest, NextResponse } from "next/server";
 
 const APP_PASSWORD = process.env.APP_PASSWORD ?? "fitsec";
 const COOKIE_NAME = "app_auth";
-const PUBLIC_PATHS = ["/login"];
+const PUBLIC_PATHS = ["/login", "/public"];
 
 export function middleware(request: NextRequest) {
   const { pathname } = request.nextUrl;

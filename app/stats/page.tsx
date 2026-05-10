@@ -16,6 +16,9 @@ import {
   Tooltip,
   ResponsiveContainer,
   CartesianGrid,
+  PieChart,
+  Pie,
+  Cell,
 } from "recharts";
 
 interface ExerciseWithStats {
@@ -25,6 +28,9 @@ interface ExerciseWithStats {
 }
 
 type TimeFilter = "all" | "month" | "block";
+
+const COMP_COLORS = ["#4493e0", "#98b5d2", "#f59e0b", "#22c55e"];
+const PIE_COLORS = ["#4493e0", "#98b5d2", "#f59e0b", "#22c55e", "#f97316", "#a78bfa", "#ec4899", "#6ee7b7"];
 
 interface MuscleVolume {
   muscle: string;
@@ -56,6 +62,10 @@ export default function StatsPage() {
   const [dayOfWeekVolume, setDayOfWeekVolume] = useState<{ day: string; sets: number; pct: number }[]>([]);
   const [deloadAlert, setDeloadAlert] = useState(false);
   const [search, setSearch] = useState("");
+  const [showMuscleAsPie, setShowMuscleAsPie] = useState(false);
+  const [allSessionDates, setAllSessionDates] = useState<Set<string>>(new Set());
+  const [compExercises, setCompExercises] = useState<string[]>([]);
+  const [exportLoading, setExportLoading] = useState(false);
 
   useEffect(() => {
     load();
@@ -252,6 +262,9 @@ export default function StatsPage() {
     }));
     setDayOfWeekVolume(dowData);
 
+    // Session dates para heatmap anual (de todos os sets, ignora filtro)
+    setAllSessionDates(new Set(allSets.map((s: any) => s.performed_at.slice(0, 10))));
+
     // Alerta de deload
     const thisWeekVol = allWorkingSets
       .filter((s: any) => s.performed_at.slice(0, 10) >= trend[trend.length - 1]?.startStr)
@@ -266,6 +279,89 @@ export default function StatsPage() {
     );
     const avg4 = past4Vols.reduce((sum, v) => sum + v, 0) / 4;
     setDeloadAlert(avg4 > 500 && thisWeekVol < avg4 * 0.65 && now.getDay() >= 3);
+  }
+
+  async function exportCSV() {
+    setExportLoading(true);
+    const { data: sets } = await supabase
+      .from("session_sets")
+      .select("*, exercises(name, primary_muscle), workout_sessions(session_date)")
+      .order("performed_at");
+    setExportLoading(false);
+    if (!sets) return;
+
+    const headers = "data,exercicio,musculo,serie,kg,reps,rir,aquecimento,falha,e1rm";
+    const rows = (sets as any[]).map((s) => {
+      const e1 = Math.round(s.weight_kg * (1 + s.reps / 30) * 10) / 10;
+      return [
+        s.workout_sessions?.session_date ?? s.performed_at.slice(0, 10),
+        `"${s.exercises?.name ?? s.exercise_id}"`,
+        s.exercises?.primary_muscle ?? "",
+        s.set_number,
+        s.weight_kg,
+        s.reps,
+        s.rir ?? "",
+        s.is_warmup ? "sim" : "não",
+        s.is_failure ? "sim" : "não",
+        e1,
+      ].join(",");
+    });
+
+    const csv = [headers, ...rows].join("\n");
+    const blob = new Blob(["﻿" + csv], { type: "text/csv;charset=utf-8;" });
+    const url = URL.createObjectURL(blob);
+    const link = document.createElement("a");
+    link.href = url;
+    link.download = `fitsec_${new Date().toISOString().slice(0, 10)}.csv`;
+    document.body.appendChild(link);
+    link.click();
+    document.body.removeChild(link);
+    URL.revokeObjectURL(url);
+  }
+
+  function toggleCompExercise(id: string) {
+    setCompExercises((prev) =>
+      prev.includes(id) ? prev.filter((x) => x !== id) : prev.length >= 4 ? prev : [...prev, id]
+    );
+  }
+
+  function computeCompData() {
+    if (compExercises.length === 0) return { rows: [], pbs: {} as Record<string, number> };
+
+    const pbs: Record<string, number> = {};
+    compExercises.forEach((id) => {
+      const sets = rawSets.filter((s: any) => s.exercise_id === id && !s.is_warmup);
+      pbs[id] = sets.reduce((max: number, s: any) => Math.max(max, s.weight_kg * (1 + s.reps / 30)), 0);
+    });
+
+    const weeks: Record<string, Record<string, number>> = {};
+    rawSets
+      .filter((s: any) => !s.is_warmup && compExercises.includes(s.exercise_id))
+      .forEach((s: any) => {
+        const date = new Date(s.performed_at);
+        const dow = date.getDay();
+        const mon = new Date(date);
+        mon.setDate(date.getDate() - (dow === 0 ? 6 : dow - 1));
+        const key = mon.toISOString().slice(0, 10);
+        const e1 = s.weight_kg * (1 + s.reps / 30);
+        if (!weeks[key]) weeks[key] = {};
+        if (!weeks[key][s.exercise_id] || e1 > weeks[key][s.exercise_id]) {
+          weeks[key][s.exercise_id] = e1;
+        }
+      });
+
+    const sortedWeeks = Object.keys(weeks).sort().slice(-16);
+    const rows = sortedWeeks.map((week) => {
+      const entry: any = { week: week.slice(5) };
+      compExercises.forEach((id) => {
+        if (weeks[week][id] && pbs[id] > 0) {
+          entry[id] = Math.round((weeks[week][id] / pbs[id]) * 100);
+        }
+      });
+      return entry;
+    });
+
+    return { rows, pbs };
   }
 
   const filtered = search.trim()
@@ -357,6 +453,24 @@ export default function StatsPage() {
               <div className="text-xs mt-0.5" style={{ color: "var(--faint)" }}>12 sem</div>
             </Card>
           </div>
+
+          {/* Export + Heatmap anual */}
+          <div className="flex justify-between items-center mb-2">
+            <Eyebrow>Atividade · 52 semanas</Eyebrow>
+            <button
+              onClick={exportCSV}
+              disabled={exportLoading}
+              className="text-xs font-bold px-3 py-1.5 rounded-full"
+              style={{ background: "var(--surface)", color: "var(--muted)", border: "0.5px solid var(--border)", minHeight: "auto" }}
+            >
+              {exportLoading ? "..." : "↓ CSV"}
+            </button>
+          </div>
+          {allSessionDates.size > 0 && (
+            <Card className="!p-3 mb-5">
+              <YearHeatmap sessionDates={allSessionDates} />
+            </Card>
+          )}
 
           {/* Volume semanal — tendência 8 semanas */}
           {hasTrend && (
@@ -472,39 +586,77 @@ export default function StatsPage() {
             </>
           )}
 
-          {/* Volume por músculo */}
+          {/* Volume por músculo — barra ou pizza */}
           {muscleVolumes.length > 0 && (
             <>
-              <Eyebrow className="mb-2">Volume por músculo</Eyebrow>
+              <div className="flex justify-between items-center mb-2">
+                <Eyebrow>Volume por músculo</Eyebrow>
+                <button
+                  onClick={() => setShowMuscleAsPie((v) => !v)}
+                  className="text-xs font-bold px-2.5 py-1 rounded-full"
+                  style={{ background: "var(--surface)", color: "var(--muted)", border: "0.5px solid var(--border)", minHeight: "auto" }}
+                >
+                  {showMuscleAsPie ? "Barras" : "Pizza"}
+                </button>
+              </div>
               <Card className="mb-5">
-                <div className="space-y-3">
-                  {muscleVolumes.map(({ muscle, volume, sets, pct }) => (
-                    <div key={muscle}>
-                      <div className="flex justify-between items-baseline text-xs mb-1.5">
-                        <span className="font-medium">
-                          {(MUSCLE_LABELS as Record<string, string>)[muscle] ?? muscle}
-                        </span>
-                        <div className="flex items-baseline gap-2">
-                          <span className="font-bold tabular" style={{ color: "var(--accent)" }}>
-                            {sets} {sets === 1 ? "série" : "séries"}
+                {showMuscleAsPie ? (
+                  <div>
+                    <ResponsiveContainer width="100%" height={200}>
+                      <PieChart>
+                        <Pie
+                          data={muscleVolumes}
+                          dataKey="sets"
+                          nameKey="muscle"
+                          cx="50%"
+                          cy="50%"
+                          outerRadius={80}
+                          innerRadius={44}
+                        >
+                          {muscleVolumes.map((_, idx) => (
+                            <Cell key={idx} fill={PIE_COLORS[idx % PIE_COLORS.length]} />
+                          ))}
+                        </Pie>
+                        <Tooltip
+                          contentStyle={{ background: "var(--background)", border: "0.5px solid var(--border-strong)", borderRadius: 8, fontSize: 11 }}
+                          formatter={(v: any, _: any, props: any) => [`${v} séries`, (MUSCLE_LABELS as Record<string, string>)[props.payload.muscle] ?? props.payload.muscle]}
+                        />
+                      </PieChart>
+                    </ResponsiveContainer>
+                    <div className="flex flex-wrap gap-x-3 gap-y-1 mt-1">
+                      {muscleVolumes.map(({ muscle, sets }, idx) => (
+                        <div key={muscle} className="flex items-center gap-1 text-xs">
+                          <div className="w-2 h-2 rounded-full flex-shrink-0" style={{ background: PIE_COLORS[idx % PIE_COLORS.length] }} />
+                          <span style={{ color: "var(--muted)" }}>{(MUSCLE_LABELS as Record<string, string>)[muscle] ?? muscle}</span>
+                          <span className="font-bold tabular" style={{ color: "var(--text)" }}>{sets}s</span>
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+                ) : (
+                  <div className="space-y-3">
+                    {muscleVolumes.map(({ muscle, volume, sets, pct }) => (
+                      <div key={muscle}>
+                        <div className="flex justify-between items-baseline text-xs mb-1.5">
+                          <span className="font-medium">
+                            {(MUSCLE_LABELS as Record<string, string>)[muscle] ?? muscle}
                           </span>
-                          <span style={{ color: "var(--faint)" }}>
-                            {volume >= 1000 ? `${(volume / 1000).toFixed(1)}t` : `${Math.round(volume)}kg`}
-                          </span>
+                          <div className="flex items-baseline gap-2">
+                            <span className="font-bold tabular" style={{ color: "var(--accent)" }}>
+                              {sets} {sets === 1 ? "série" : "séries"}
+                            </span>
+                            <span style={{ color: "var(--faint)" }}>
+                              {volume >= 1000 ? `${(volume / 1000).toFixed(1)}t` : `${Math.round(volume)}kg`}
+                            </span>
+                          </div>
+                        </div>
+                        <div className="h-1.5 rounded-full overflow-hidden" style={{ background: "var(--surface-strong)" }}>
+                          <div className="h-full rounded-full transition-all duration-500" style={{ width: `${pct}%`, background: "var(--primary)" }} />
                         </div>
                       </div>
-                      <div
-                        className="h-1.5 rounded-full overflow-hidden"
-                        style={{ background: "var(--surface-strong)" }}
-                      >
-                        <div
-                          className="h-full rounded-full transition-all duration-500"
-                          style={{ width: `${pct}%`, background: "var(--primary)" }}
-                        />
-                      </div>
-                    </div>
-                  ))}
-                </div>
+                    ))}
+                  </div>
+                )}
               </Card>
             </>
           )}
@@ -572,6 +724,83 @@ export default function StatsPage() {
             </>
           )}
 
+          {/* Comparar exercícios — força relativa normalizada */}
+          {data.length >= 2 && (
+            <>
+              <Eyebrow className="mb-2">Comparar exercícios</Eyebrow>
+              <Card className="mb-5">
+                <div className="text-xs mb-3" style={{ color: "var(--muted)" }}>
+                  Selecione até 4 exercícios para comparar a progressão normalizada (% do seu PR)
+                </div>
+                <div className="flex flex-wrap gap-1.5 mb-3">
+                  {data.slice(0, 12).map((d, idx) => {
+                    const selected = compExercises.includes(d.exercise.id);
+                    const colorIdx = compExercises.indexOf(d.exercise.id);
+                    return (
+                      <button
+                        key={d.exercise.id}
+                        onClick={() => toggleCompExercise(d.exercise.id)}
+                        className="text-xs font-medium px-2.5 py-1 rounded-full"
+                        style={{
+                          minHeight: "auto",
+                          background: selected ? `${COMP_COLORS[colorIdx]}20` : "var(--surface)",
+                          border: `0.5px solid ${selected ? COMP_COLORS[colorIdx] : "var(--border)"}`,
+                          color: selected ? COMP_COLORS[colorIdx] : "var(--muted)",
+                          cursor: !selected && compExercises.length >= 4 ? "not-allowed" : "pointer",
+                          opacity: !selected && compExercises.length >= 4 ? 0.45 : 1,
+                        }}
+                      >
+                        {d.exercise.name}
+                      </button>
+                    );
+                  })}
+                </div>
+                {(() => {
+                  if (compExercises.length < 2) return (
+                    <div className="text-xs text-center py-4" style={{ color: "var(--faint)" }}>
+                      Selecione pelo menos 2 exercícios
+                    </div>
+                  );
+                  const { rows, pbs } = computeCompData();
+                  if (rows.length === 0) return <div className="text-xs text-center py-4" style={{ color: "var(--faint)" }}>Sem dados para comparar</div>;
+                  return (
+                    <>
+                      <ResponsiveContainer width="100%" height={160}>
+                        <LineChart data={rows} margin={{ top: 4, right: 5, left: -24, bottom: 0 }}>
+                          <CartesianGrid stroke="rgba(237,238,239,0.05)" strokeDasharray="2 3" vertical={false} />
+                          <XAxis dataKey="week" tick={{ fill: "rgba(237,238,239,0.35)", fontSize: 9 }} tickLine={false} axisLine={{ stroke: "rgba(237,238,239,0.1)" }} interval="preserveStartEnd" />
+                          <YAxis tick={{ fill: "rgba(237,238,239,0.35)", fontSize: 9 }} tickLine={false} axisLine={false} tickFormatter={(v) => `${v}%`} domain={[60, 100]} />
+                          <Tooltip
+                            contentStyle={{ background: "var(--background)", border: "0.5px solid var(--border-strong)", borderRadius: 8, fontSize: 11 }}
+                            formatter={(v: any, key: any) => {
+                              const ex = data.find((d) => d.exercise.id === key);
+                              return [`${v}%`, ex?.exercise.name ?? key];
+                            }}
+                          />
+                          {compExercises.map((id, i) => (
+                            <Line key={id} type="monotone" dataKey={id} stroke={COMP_COLORS[i]} strokeWidth={2} dot={false} activeDot={{ r: 3 }} connectNulls />
+                          ))}
+                        </LineChart>
+                      </ResponsiveContainer>
+                      <div className="flex flex-wrap gap-x-3 gap-y-1 mt-2">
+                        {compExercises.map((id, i) => {
+                          const ex = data.find((d) => d.exercise.id === id);
+                          return (
+                            <div key={id} className="flex items-center gap-1 text-xs">
+                              <div className="w-2 h-2 rounded-full flex-shrink-0" style={{ background: COMP_COLORS[i] }} />
+                              <span style={{ color: "var(--muted)" }}>{ex?.exercise.name}</span>
+                              <span className="font-bold tabular" style={{ color: "var(--text)" }}>{pbs[id] > 0 ? `${Math.round(pbs[id])}kg` : "—"}</span>
+                            </div>
+                          );
+                        })}
+                      </div>
+                    </>
+                  );
+                })()}
+              </Card>
+            </>
+          )}
+
           {/* Lista de exercícios */}
           {data.length > 0 && (
             <>
@@ -625,6 +854,82 @@ export default function StatsPage() {
           )}
         </>
       )}
+    </div>
+  );
+}
+
+// ─── YearHeatmap ────────────────────────────────────────────────────────────
+
+function YearHeatmap({ sessionDates }: { sessionDates: Set<string> }) {
+  const WEEKS = 52;
+  const today = new Date();
+  const todayStr = today.toISOString().slice(0, 10);
+
+  // Start 52 weeks ago, aligned to Monday
+  const start = new Date(today);
+  start.setDate(start.getDate() - WEEKS * 7 + 1);
+  const dow = start.getDay();
+  start.setDate(start.getDate() + (dow === 0 ? -6 : 1 - dow));
+
+  const months: { label: string; col: number }[] = [];
+  let lastMonth = -1;
+
+  return (
+    <div>
+      <div className="overflow-x-auto">
+        <div style={{ minWidth: `${WEEKS * 11}px` }}>
+          <div className="space-y-1">
+            {Array.from({ length: 7 }, (_, day) => (
+              <div key={day} className="flex gap-1">
+                {Array.from({ length: WEEKS }, (_, week) => {
+                  const d = new Date(start);
+                  d.setDate(d.getDate() + week * 7 + day);
+                  const dateStr = d.toISOString().slice(0, 10);
+                  const hasSession = sessionDates.has(dateStr);
+                  const isFuture = dateStr > todayStr;
+                  const isToday = dateStr === todayStr;
+
+                  if (day === 0) {
+                    const m = d.getMonth();
+                    if (m !== lastMonth) {
+                      lastMonth = m;
+                      months.push({ label: d.toLocaleDateString("pt-BR", { month: "short" }), col: week });
+                    }
+                  }
+
+                  return (
+                    <div
+                      key={week}
+                      title={dateStr}
+                      style={{
+                        width: 10,
+                        height: 10,
+                        borderRadius: 2,
+                        flexShrink: 0,
+                        background: hasSession
+                          ? "var(--primary)"
+                          : isToday
+                          ? "rgba(68,147,224,0.25)"
+                          : "var(--surface)",
+                        opacity: isFuture ? 0.1 : 1,
+                        border: isToday ? "1px solid rgba(68,147,224,0.4)" : "none",
+                      }}
+                    />
+                  );
+                })}
+              </div>
+            ))}
+          </div>
+        </div>
+      </div>
+      <div className="flex gap-2 mt-2 text-xs" style={{ color: "var(--faint)" }}>
+        <span>Menos</span>
+        {[0, 1].map((v) => (
+          <div key={v} style={{ width: 10, height: 10, borderRadius: 2, background: v === 0 ? "var(--surface)" : "var(--primary)", marginTop: 1 }} />
+        ))}
+        <span>Mais</span>
+        <span className="ml-auto">{sessionDates.size} sessões registradas</span>
+      </div>
     </div>
   );
 }
