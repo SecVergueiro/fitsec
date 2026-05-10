@@ -46,6 +46,24 @@ function LoginForm() {
     router.refresh();
   }
 
+  async function handleResetPassword() {
+    if (!email) {
+      setError("Digite seu email primeiro pra receber o link de recuperação.");
+      return;
+    }
+    setLoading(true);
+    setError(null);
+    const { error: err } = await supabase.auth.resetPasswordForEmail(email, {
+      redirectTo: typeof window !== "undefined" ? `${window.location.origin}/login` : undefined,
+    });
+    setLoading(false);
+    if (err) {
+      setError(err.message);
+      return;
+    }
+    setSuccess("Link de recuperação enviado pro seu email. Confira a caixa de entrada.");
+  }
+
   async function handleSignup(e: React.FormEvent) {
     e.preventDefault();
     if (!email || !password || !confirmPassword) return;
@@ -167,6 +185,15 @@ function LoginForm() {
               }}
             >
               {loading ? "Entrando..." : "Entrar →"}
+            </button>
+            <button
+              type="button"
+              onClick={handleResetPassword}
+              disabled={loading}
+              className="w-full text-center text-xs font-medium mt-2"
+              style={{ color: "var(--muted)", minHeight: "auto", padding: "8px", background: "transparent", border: "none", cursor: "pointer" }}
+            >
+              Esqueci minha senha
             </button>
           </form>
         )}

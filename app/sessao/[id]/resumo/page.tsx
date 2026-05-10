@@ -7,7 +7,7 @@ import { supabase } from "@/lib/supabase";
 import { Card, Eyebrow, Pill } from "@/components/ui";
 import { Button, Spinner } from "@/components/Button";
 import { useConfirm } from "@/components/Toast";
-import { estimate1RM, fmtDuration, fmtKg, fmtTonnage } from "@/lib/utils";
+import { classifyVolume, estimate1RM, fmtDuration, fmtKg, fmtTonnage, MUSCLE_LABELS } from "@/lib/utils";
 import type { Exercise, SessionSet, WorkoutSession } from "@/lib/database.types";
 
 interface ExSummary {
@@ -57,6 +57,64 @@ export default function ResumoPage() {
     await supabase.from("session_exercises").delete().eq("session_id", sessionId);
     await supabase.from("workout_sessions").delete().eq("id", sessionId);
     router.push("/historico");
+  }
+
+  async function handleRepeat() {
+    // Clona o treino completo como nova sessão
+    const ok = await confirm({
+      title: "Repetir este treino?",
+      message: "Cria uma nova sessão com os mesmos exercícios e prescrição.",
+      confirmLabel: "Repetir treino",
+      danger: false,
+    });
+    if (!ok || !session) return;
+
+    const { data: { user } } = await supabase.auth.getUser();
+
+    // Pega mesociclo ativo (se houver)
+    const { data: activeMeso } = await supabase
+      .from("mesocycles").select("id").eq("is_active", true).limit(1).maybeSingle();
+
+    // Cria nova sessão
+    const { data: newSession } = await supabase
+      .from("workout_sessions")
+      .insert({
+        template_day_id: session.template_day_id,
+        mesocycle_id: (activeMeso as any)?.id ?? null,
+        session_date: new Date().toLocaleDateString("en-CA"),
+        started_at: new Date().toISOString(),
+        user_id: user?.id,
+      } as any)
+      .select()
+      .single();
+
+    if (!newSession) return;
+    const newId = (newSession as any).id;
+
+    // Copia os exercícios da sessão atual (mantendo prescrição)
+    const { data: oldExs } = await supabase
+      .from("session_exercises")
+      .select("*")
+      .eq("session_id", sessionId)
+      .order("exercise_order");
+
+    if (oldExs && oldExs.length > 0) {
+      const clones = (oldExs as any[]).map((ex) => ({
+        session_id: newId,
+        exercise_id: ex.exercise_id,
+        template_exercise_id: ex.template_exercise_id,
+        exercise_order: ex.exercise_order,
+        prescribed_sets: ex.prescribed_sets,
+        rep_range_min: ex.rep_range_min,
+        rep_range_max: ex.rep_range_max,
+        target_rir: ex.target_rir,
+        rest_seconds: ex.rest_seconds,
+        superset_group: ex.superset_group,
+        is_completed: false,
+      }));
+      await supabase.from("session_exercises").insert(clones as any);
+    }
+    router.push(`/sessao/${newId}`);
   }
 
   async function handleReopen() {
@@ -198,7 +256,15 @@ export default function ResumoPage() {
   const allWorkingSets = summary.flatMap((e) => e.realSets);
   const tonnage = allWorkingSets.reduce((sum, s) => sum + s.weight_kg * s.reps, 0);
   const prs = summary.filter((e) => e.isPR);
+  const failureCount = allWorkingSets.filter((s) => s.is_failure).length;
   const duration = session.duration_minutes ?? 0;
+
+  // Volume por grupo muscular nesta sessão
+  const volumeByMuscle: Record<string, number> = {};
+  summary.forEach((ex) => {
+    const m = ex.exercise.primary_muscle;
+    volumeByMuscle[m] = (volumeByMuscle[m] ?? 0) + ex.realSets.length;
+  });
 
   return (
     <div className="fade-in">
@@ -281,6 +347,66 @@ export default function ResumoPage() {
           <Stat label="Volume" value={fmtTonnage(tonnage)} />
         </div>
       </Card>
+
+      {/* Séries até a falha */}
+      {failureCount > 0 && (
+        <div
+          className="rounded-xl px-3 py-2.5 mb-4 flex items-center gap-2"
+          style={{ background: "rgba(239,68,68,0.08)", border: "0.5px solid rgba(239,68,68,0.25)" }}
+        >
+          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="#ef4444" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round" style={{ flexShrink: 0 }}>
+            <circle cx="12" cy="12" r="10"/><line x1="12" y1="8" x2="12" y2="12"/><line x1="12" y1="16" x2="12.01" y2="16"/>
+          </svg>
+          <span className="text-xs font-medium" style={{ color: "#ff8888" }}>
+            <strong>{failureCount}</strong> {failureCount === 1 ? "série levada" : "séries levadas"} à falha
+          </span>
+        </div>
+      )}
+
+      {/* Volume por grupo muscular na sessão (séries efetivas) */}
+      {Object.keys(volumeByMuscle).length > 0 && (
+        <>
+          <Eyebrow className="mb-2">Volume por músculo · esta sessão</Eyebrow>
+          <Card className="mb-4">
+            <div className="space-y-2.5">
+              {Object.entries(volumeByMuscle)
+                .sort(([, a], [, b]) => b - a)
+                .map(([muscle, sets]) => {
+                  const cls = classifyVolume(muscle, sets);
+                  const label = MUSCLE_LABELS[muscle] ?? muscle;
+                  return (
+                    <div key={muscle} className="flex items-center gap-3">
+                      <span className="text-sm font-medium flex-1 truncate">{label}</span>
+                      <span className="text-sm tabular font-bold" style={{ color: cls?.color ?? "var(--muted)" }}>
+                        {sets}
+                      </span>
+                      <span className="text-xs flex-shrink-0" style={{ color: "var(--faint)" }}>
+                        {sets === 1 ? "série" : "séries"}
+                      </span>
+                      {cls && (
+                        <span
+                          className="text-xs font-bold flex-shrink-0 px-2 py-0.5 rounded"
+                          style={{
+                            color: cls.color,
+                            background: `${cls.color}1a`,
+                            fontSize: 9,
+                            letterSpacing: "0.06em",
+                            textTransform: "uppercase",
+                          }}
+                        >
+                          {cls.label}
+                        </span>
+                      )}
+                    </div>
+                  );
+                })}
+            </div>
+            <div className="text-xs mt-3 pt-3" style={{ borderTop: "0.5px solid var(--border)", color: "var(--faint)" }}>
+              Faixas baseadas em MEV/MAV/MRV (Renaissance Periodization). São séries efetivas, não soma semanal.
+            </div>
+          </Card>
+        </>
+      )}
 
       {/* Comparativo com última sessão do mesmo dia */}
       {prevVolume && prevVolume.tonnage > 0 && (() => {
@@ -437,6 +563,17 @@ export default function ResumoPage() {
           <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
             <path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7"/>
             <path d="M18.5 2.5a2.121 2.121 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z"/>
+          </svg>
+        </button>
+        <button
+          onClick={handleRepeat}
+          aria-label="Repetir este treino"
+          title="Criar nova sessão com os mesmos exercícios"
+          className="rounded-lg flex items-center justify-center"
+          style={{ width: 44, minHeight: 44, background: "var(--surface-strong)", color: "var(--primary)", border: "0.5px solid var(--border-strong)" }}
+        >
+          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+            <polyline points="1 4 1 10 7 10"/><path d="M3.51 15a9 9 0 1 0 2.13-9.36L1 10"/>
           </svg>
         </button>
         <button

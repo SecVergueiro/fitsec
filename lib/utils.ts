@@ -180,6 +180,130 @@ export const STRENGTH_LEVEL_COLORS: Record<StrengthLevel, string> = {
   elite: "#fbbf24",
 };
 
+// ============================================================
+// Volume Landmarks (Renaissance Periodization)
+// Séries efetivas por semana por grupo muscular
+// MEV  = Minimum Effective Volume (mínimo pra crescer)
+// MV   = Maintenance Volume
+// MAV  = Maximum Adaptive Volume (zona ótima)
+// MRV  = Maximum Recoverable Volume (limite)
+// ============================================================
+export type VolumeStatus = "abaixo_mev" | "manutencao" | "otimo" | "alto" | "excessivo";
+
+interface VolumeRange {
+  mev: number;
+  mv: number;
+  mav: number;
+  mrv: number;
+}
+
+export const VOLUME_LANDMARKS: Record<string, VolumeRange> = {
+  peito:        { mev: 8,  mv: 12, mav: 18, mrv: 22 },
+  costas:       { mev: 10, mv: 14, mav: 20, mrv: 25 },
+  ombro:        { mev: 8,  mv: 12, mav: 18, mrv: 26 },
+  ombro_anterior:  { mev: 6,  mv: 10, mav: 14, mrv: 20 },
+  ombro_posterior: { mev: 8,  mv: 12, mav: 18, mrv: 26 },
+  biceps:       { mev: 8,  mv: 12, mav: 18, mrv: 26 },
+  triceps:      { mev: 6,  mv: 10, mav: 16, mrv: 22 },
+  antebraco:    { mev: 0,  mv: 6,  mav: 12, mrv: 20 },
+  quadriceps:   { mev: 8,  mv: 12, mav: 18, mrv: 25 },
+  posterior:    { mev: 6,  mv: 10, mav: 14, mrv: 20 },
+  gluteo:       { mev: 6,  mv: 10, mav: 14, mrv: 16 },
+  panturrilha:  { mev: 8,  mv: 12, mav: 16, mrv: 25 },
+  core:         { mev: 0,  mv: 8,  mav: 16, mrv: 25 },
+  lombar:       { mev: 0,  mv: 6,  mav: 12, mrv: 18 },
+};
+
+export function classifyVolume(muscle: string, setsThisWeek: number): {
+  status: VolumeStatus; label: string; color: string; range: VolumeRange
+} | null {
+  const range = VOLUME_LANDMARKS[muscle];
+  if (!range) return null;
+
+  let status: VolumeStatus;
+  let label: string;
+  let color: string;
+
+  if (setsThisWeek < range.mev) {
+    status = "abaixo_mev"; label = "Abaixo do MEV"; color = "#f59e0b";
+  } else if (setsThisWeek < range.mv) {
+    status = "manutencao"; label = "Manutenção"; color = "#94a3b8";
+  } else if (setsThisWeek <= range.mav) {
+    status = "otimo"; label = "Ótimo"; color = "#22c55e";
+  } else if (setsThisWeek <= range.mrv) {
+    status = "alto"; label = "Alto"; color = "#4493e0";
+  } else {
+    status = "excessivo"; label = "Excessivo"; color = "#ef4444";
+  }
+  return { status, label, color, range };
+}
+
+// ============================================================
+// Plateau Detection
+// Detecta se um exercício está estagnado: melhor e1RM das últimas
+// N sessões não cresceu vs as N sessões anteriores
+// ============================================================
+export interface PlateauResult {
+  isPlateau: boolean;
+  weeks: number;
+  exerciseId: string;
+  exerciseName: string;
+  currentE1RM: number;
+  bestE1RM: number;
+}
+
+export function detectPlateau(
+  sets: { exercise_id: string; weight_kg: number; reps: number; performed_at: string; is_warmup: boolean }[],
+  exerciseName: string,
+  exerciseId: string
+): PlateauResult | null {
+  const real = sets
+    .filter((s) => !s.is_warmup && s.exercise_id === exerciseId)
+    .sort((a, b) => new Date(a.performed_at).getTime() - new Date(b.performed_at).getTime());
+
+  if (real.length < 6) return null;
+
+  // Agrupa por dia (data simples), pega melhor e1RM por dia
+  const byDate: Record<string, number> = {};
+  real.forEach((s) => {
+    const d = s.performed_at.slice(0, 10);
+    const e1 = estimate1RM(s.weight_kg, s.reps);
+    byDate[d] = Math.max(byDate[d] ?? 0, e1);
+  });
+
+  const sortedDays = Object.entries(byDate)
+    .sort(([a], [b]) => a.localeCompare(b))
+    .map(([date, e1]) => ({ date, e1 }));
+
+  if (sortedDays.length < 4) return null;
+
+  // Últimas 3 sessões vs all-time best
+  const last3 = sortedDays.slice(-3);
+  const currentMax = Math.max(...last3.map((d) => d.e1));
+  const bestE1RM = Math.max(...sortedDays.map((d) => d.e1));
+
+  // Se o pico foi há mais de 4 sessões e o current está <= 102% do best, é platô
+  const bestIdx = sortedDays.findIndex((d) => d.e1 === bestE1RM);
+  const sessionsSinceBest = sortedDays.length - 1 - bestIdx;
+
+  if (sessionsSinceBest >= 3 && currentMax <= bestE1RM * 1.02) {
+    // Estima semanas baseado em diferença de datas
+    const firstDate = new Date(sortedDays[bestIdx].date);
+    const lastDate = new Date(sortedDays[sortedDays.length - 1].date);
+    const weeks = Math.round((lastDate.getTime() - firstDate.getTime()) / (7 * 24 * 60 * 60 * 1000));
+    return {
+      isPlateau: true,
+      weeks: Math.max(1, weeks),
+      exerciseId,
+      exerciseName,
+      currentE1RM: currentMax,
+      bestE1RM,
+    };
+  }
+
+  return null;
+}
+
 // Streak milestones — para celebrar 7, 30, 100 dias
 export function getStreakMilestone(streak: number): { reached: number; next: number; label: string } | null {
   const milestones = [

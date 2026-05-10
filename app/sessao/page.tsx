@@ -27,6 +27,7 @@ export default function SessaoIndex() {
   const [recentSessions, setRecentSessions] = useState<(WorkoutSession & { day_name?: string })[]>([]);
   const [activeMesoId, setActiveMesoId] = useState<string | null>(null);
   const [activeMeso, setActiveMeso] = useState<Mesocycle | null>(null);
+  const [estimatedDuration, setEstimatedDuration] = useState<number | null>(null);
   const [starting, setStarting] = useState(false);
   const [showCheckin, setShowCheckin] = useState(false);
   const [pendingDayId, setPendingDayId] = useState<string | null>(null);
@@ -117,6 +118,21 @@ export default function SessaoIndex() {
             setExerciseCount(n);
           }
         }
+
+        // Estima duração baseada nas últimas 5 sessões desse dia
+        try {
+          const { data: pastSessions } = await supabase
+            .from("workout_sessions")
+            .select("duration_minutes")
+            .eq("template_day_id", dayData.id)
+            .not("duration_minutes", "is", null)
+            .order("session_date", { ascending: false })
+            .limit(5);
+          if (pastSessions && pastSessions.length > 0) {
+            const avg = pastSessions.reduce((s, p) => s + (p as any).duration_minutes, 0) / pastSessions.length;
+            setEstimatedDuration(Math.round(avg));
+          }
+        } catch {/* sem estimativa */}
       }
     }
 
@@ -296,6 +312,7 @@ export default function SessaoIndex() {
           <div className="text-xs mb-4" style={{ color: "var(--muted)" }}>
             {todayDay.weekday !== null ? WEEKDAY_LABELS[todayDay.weekday] : ""}
             {exerciseCount > 0 ? ` · ${exerciseCount} exercícios` : ""}
+            {estimatedDuration ? ` · ~${estimatedDuration} min` : ""}
             {activeMeso ? ` · Semana ${mesoCurrentWeek}/${activeMeso.total_weeks}` : ""}
           </div>
           <Button onClick={() => startSession(todayDay.id)} disabled={starting} fullWidth>

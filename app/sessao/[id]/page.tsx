@@ -10,6 +10,7 @@ import { useToast, useConfirm } from "@/components/Toast";
 import { fmtTimer, estimate1RM, fmtKg } from "@/lib/utils";
 import { offlineInsert, offlineUpdate, offlineDelete } from "@/lib/offline-writes";
 import { db as offlineDB } from "@/lib/offline-db";
+import { useProfile } from "@/components/ProfileProvider";
 import type { Exercise, SessionExercise, SessionSet, WorkoutSession } from "@/lib/database.types";
 import { AddExerciseToSessionModal } from "./AddExerciseModal";
 import { SortableList, DragHandle } from "@/components/SortableList";
@@ -27,6 +28,7 @@ export default function SessaoAtivaPage() {
   const sessionId = params.id as string;
   const toast = useToast();
   const confirm = useConfirm();
+  const { profile, update: updateProfile } = useProfile();
 
   const [session, setSession] = useState<WorkoutSession | null>(null);
   const [exercises, setExercises] = useState<ExerciseWithSets[]>([]);
@@ -722,7 +724,14 @@ export default function SessaoAtivaPage() {
 
       {showFinishModal && (
         <FinishSessionModal
-          onFinish={(energy, notes, bw) => handleFinish(energy, notes, bw)}
+          defaultBodyweight={profile?.current_bodyweight_kg ?? null}
+          onFinish={async (energy, notes, bw) => {
+            // Se o usuário atualizou o peso, sincroniza no perfil também
+            if (bw != null && bw !== profile?.current_bodyweight_kg) {
+              await updateProfile({ current_bodyweight_kg: bw });
+            }
+            handleFinish(energy, notes, bw);
+          }}
           onCancel={() => setShowFinishModal(false)}
         />
       )}
@@ -1771,13 +1780,20 @@ function SessionInfoModal({
 function FinishSessionModal({
   onFinish,
   onCancel,
+  defaultBodyweight,
 }: {
   onFinish: (energyLevel: number | null, notes: string, bodyweightKg: number | null) => void;
   onCancel: () => void;
+  defaultBodyweight?: number | null;
 }) {
   const [energy, setEnergy] = useState<number | null>(null);
   const [notes, setNotes] = useState("");
-  const [bodyweight, setBodyweight] = useState("");
+  const [bodyweight, setBodyweight] = useState(defaultBodyweight ? String(defaultBodyweight) : "");
+
+  const noteChips = ["PR!", "Ótima execução", "Pesado hoje", "Ombro travando", "Energia baixa", "Estagnado"];
+  function addChip(chip: string) {
+    setNotes((prev) => prev ? `${prev} · ${chip}` : chip);
+  }
 
   return (
     <div
@@ -1831,7 +1847,7 @@ function FinishSessionModal({
             className="text-xs font-bold mb-2"
             style={{ color: "var(--muted)", letterSpacing: "0.08em", textTransform: "uppercase" }}
           >
-            Peso corporal (opcional)
+            Peso corporal {defaultBodyweight ? "(atualizar?)" : "(opcional)"}
           </div>
           <input
             type="number"
@@ -1849,6 +1865,11 @@ function FinishSessionModal({
               minHeight: "44px",
             }}
           />
+          {defaultBodyweight && (
+            <div className="text-xs mt-1.5" style={{ color: "var(--faint)" }}>
+              Pré-preenchido do perfil. Atualize só se pesou hoje.
+            </div>
+          )}
         </div>
 
         <div className="mb-5">
@@ -1857,6 +1878,25 @@ function FinishSessionModal({
             style={{ color: "var(--muted)", letterSpacing: "0.08em", textTransform: "uppercase" }}
           >
             Notas da sessão
+          </div>
+          {/* Chips de notas rápidas */}
+          <div className="flex flex-wrap gap-1.5 mb-2">
+            {noteChips.map((chip) => (
+              <button
+                key={chip}
+                onClick={() => addChip(chip)}
+                className="rounded-full text-xs font-medium"
+                style={{
+                  padding: "5px 11px", minHeight: "auto",
+                  background: "var(--surface)",
+                  border: "0.5px solid var(--border)",
+                  color: "var(--muted)",
+                  cursor: "pointer",
+                }}
+              >
+                + {chip}
+              </button>
+            ))}
           </div>
           <textarea
             value={notes}

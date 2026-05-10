@@ -4,7 +4,7 @@ import { useEffect, useState } from "react";
 import Link from "next/link";
 import { supabase } from "@/lib/supabase";
 import { Card, Eyebrow, Pill } from "@/components/ui";
-import { fmtRelativeDate, getStreakMilestone, WEEKDAY_LABELS } from "@/lib/utils";
+import { detectPlateau, fmtRelativeDate, getStreakMilestone, WEEKDAY_LABELS } from "@/lib/utils";
 import { useProfile } from "@/components/ProfileProvider";
 import { offlineRead } from "@/lib/offline-reads";
 import { db as offlineDB } from "@/lib/offline-db";
@@ -36,6 +36,7 @@ export default function HomePage() {
   const [prevWeekVolume, setPrevWeekVolume] = useState<number | null>(null);
   const [streak, setStreak] = useState<number>(0);
   const [heatmapSessions, setHeatmapSessions] = useState<Set<string>>(new Set());
+  const [plateauAlert, setPlateauAlert] = useState<{ exerciseName: string; weeks: number } | null>(null);
   const [activeSession, setActiveSession] = useState<{ id: string; started_at: string } | null>(null);
   const [editingGoal, setEditingGoal] = useState(false);
   const [goalInput, setGoalInput] = useState("4");
@@ -223,6 +224,35 @@ export default function HomePage() {
 
     setStreak(computeStreak(recentCompleted ?? []));
     setHeatmapSessions(new Set((recentCompleted ?? []).map((s) => s.session_date)));
+
+    // 7. Detecção de platô — varre os exercícios mais frequentes nos últimos 60 dias
+    try {
+      const cutoff = new Date();
+      cutoff.setDate(cutoff.getDate() - 60);
+      const { data: recentSets } = await supabase
+        .from("session_sets")
+        .select("exercise_id, weight_kg, reps, performed_at, is_warmup")
+        .gte("performed_at", cutoff.toISOString())
+        .eq("is_warmup", false);
+
+      if (recentSets && recentSets.length > 0) {
+        // Top 5 exercícios mais frequentes
+        const counts: Record<string, number> = {};
+        (recentSets as any[]).forEach((s) => { counts[s.exercise_id] = (counts[s.exercise_id] ?? 0) + 1; });
+        const topIds = Object.entries(counts).sort(([, a], [, b]) => b - a).slice(0, 5).map(([id]) => id);
+
+        const { data: exData } = await supabase.from("exercises").select("id, name").in("id", topIds);
+        const nameById = new Map((exData as any[])?.map((e) => [e.id, e.name]) ?? []);
+
+        for (const exId of topIds) {
+          const result = detectPlateau(recentSets as any, nameById.get(exId) ?? "exercício", exId);
+          if (result?.isPlateau) {
+            setPlateauAlert({ exerciseName: result.exerciseName, weeks: result.weeks });
+            break;
+          }
+        }
+      }
+    } catch {/* sem alerta */}
 
     setLoading(false);
   }
@@ -507,6 +537,33 @@ export default function HomePage() {
             </div>
           )}
         </div>
+      )}
+
+      {/* Alerta de platô */}
+      {!loading && plateauAlert && (
+        <Link href="/stats">
+          <div
+            className="rounded-xl px-4 py-3 mb-4 flex items-center gap-3"
+            style={{
+              background: "rgba(245, 158, 11, 0.08)",
+              border: "0.5px solid rgba(245, 158, 11, 0.3)",
+            }}
+          >
+            <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="#f59e0b" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" style={{ flexShrink: 0 }}>
+              <path d="M10.29 3.86 1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z"/>
+              <line x1="12" y1="9" x2="12" y2="13"/>
+              <line x1="12" y1="17" x2="12.01" y2="17"/>
+            </svg>
+            <div className="flex-1 min-w-0">
+              <div className="text-xs font-bold mb-0.5" style={{ color: "#f59e0b", letterSpacing: "0.06em", textTransform: "uppercase" }}>
+                Platô detectado
+              </div>
+              <div className="text-xs" style={{ color: "var(--muted)" }}>
+                <strong style={{ color: "var(--text)" }}>{plateauAlert.exerciseName}</strong> sem progresso há ~{plateauAlert.weeks} {plateauAlert.weeks === 1 ? "semana" : "semanas"}. Considere deload ou trocar variação.
+              </div>
+            </div>
+          </div>
+        </Link>
       )}
 
       {/* Calendario semanal */}

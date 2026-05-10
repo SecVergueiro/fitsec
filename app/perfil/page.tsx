@@ -303,26 +303,6 @@ export default function PerfilPage() {
           )}
         </SettingRow>
 
-        <SettingRow label="Unidade de peso">
-          <div className="flex gap-1.5">
-            {(["kg", "lb"] as const).map((u) => (
-              <button
-                key={u}
-                onClick={() => update({ units: u })}
-                className="rounded-md text-xs font-bold uppercase"
-                style={{
-                  padding: "5px 12px", minHeight: "auto",
-                  background: profile?.units === u ? "var(--primary)" : "var(--surface)",
-                  color: profile?.units === u ? "var(--background)" : "var(--muted)",
-                  border: `0.5px solid ${profile?.units === u ? "var(--primary)" : "var(--border)"}`,
-                  cursor: "pointer",
-                }}
-              >
-                {u}
-              </button>
-            ))}
-          </div>
-        </SettingRow>
       </Card>
 
       {/* Conta */}

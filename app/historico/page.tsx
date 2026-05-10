@@ -16,6 +16,7 @@ interface SessionWithDay extends WorkoutSession {
   tonnage?: number;
   setCount?: number;
   hasPR?: boolean;
+  failureCount?: number;
 }
 
 interface MonthGroup {
@@ -90,13 +91,14 @@ export default function HistoricoPage() {
       }
     );
 
-    const setMap: Record<string, { tonnage: number; setCount: number; sets: any[] }> = {};
+    const setMap: Record<string, { tonnage: number; setCount: number; failureCount: number; sets: any[] }> = {};
     (allSets as any[])?.forEach((s) => {
-      if (!setMap[s.session_id]) setMap[s.session_id] = { tonnage: 0, setCount: 0, sets: [] };
+      if (!setMap[s.session_id]) setMap[s.session_id] = { tonnage: 0, setCount: 0, failureCount: 0, sets: [] };
       setMap[s.session_id].sets.push(s);
       if (!s.is_warmup) {
         setMap[s.session_id].tonnage += s.weight_kg * s.reps;
         setMap[s.session_id].setCount += 1;
+        if (s.is_failure) setMap[s.session_id].failureCount += 1;
       }
     });
 
@@ -134,6 +136,7 @@ export default function HistoricoPage() {
       ...s,
       tonnage: setMap[s.id]?.tonnage ?? 0,
       setCount: setMap[s.id]?.setCount ?? 0,
+      failureCount: setMap[s.id]?.failureCount ?? 0,
       hasPR: sessionsWithPR.has(s.id),
     }));
 
@@ -333,6 +336,15 @@ export default function HistoricoPage() {
                               <path d="M8 21h8M12 17v4M17 3H7L8.5 10.5A4.5 4.5 0 0 0 12 14a4.5 4.5 0 0 0 3.5-3.5L17 3Z"/>
                             </svg>
                             PR
+                          </span>
+                        )}
+                        {s.failureCount! > 0 && (
+                          <span
+                            className="flex-shrink-0 px-1.5 py-0.5 rounded-md text-xs font-bold tabular"
+                            style={{ background: "rgba(239,68,68,0.15)", color: "#ef4444", fontSize: 9, letterSpacing: "0.06em", textTransform: "uppercase" }}
+                            title={`${s.failureCount} séries à falha`}
+                          >
+                            Falha {s.failureCount}
                           </span>
                         )}
                       </div>
