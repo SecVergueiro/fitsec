@@ -147,3 +147,13 @@ export interface PersonalRecord {
   e1rm: number;
   performed_at: string;
 }
+
+export interface UserProfile {
+  user_id: string;
+  display_name: string | null;
+  weekly_goal: number;
+  units: "kg" | "lb";
+  rest_overrides: Record<string, number>;
+  created_at: string;
+  updated_at: string;
+}

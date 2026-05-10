@@ -9,11 +9,12 @@ const TABS = [
   { href: "/sessao", label: "Treinos", icon: DumbbellIcon },
   { href: "/treinos", label: "Fichas", icon: TemplateIcon },
   { href: "/stats", label: "Stats", icon: ChartIcon },
+  { href: "/perfil", label: "Perfil", icon: ProfileIcon },
 ];
 
 export function BottomNav() {
   const pathname = usePathname();
-  const { signOut, user } = useAuth();
+  const { user } = useAuth();
 
   // Não mostra a nav em páginas públicas ou de login
   if (!user) return null;
@@ -51,22 +52,17 @@ export function BottomNav() {
             </Link>
           );
         })}
-        {/* Botão de logout */}
-        <button
-          onClick={signOut}
-          className="flex flex-col items-center justify-center gap-1 py-2"
-          style={{ color: "var(--faint)", minHeight: "auto", width: 60, cursor: "pointer" }}
-          title="Sair"
-        >
-          <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round">
-            <path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4"/>
-            <polyline points="16 17 21 12 16 7"/>
-            <line x1="21" y1="12" x2="9" y2="12"/>
-          </svg>
-          <span className="text-xs">Sair</span>
-        </button>
       </div>
     </nav>
+  );
+}
+
+function ProfileIcon({ active }: { active: boolean }) {
+  return (
+    <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={active ? 2.2 : 1.8} strokeLinecap="round" strokeLinejoin="round">
+      <path d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2"/>
+      <circle cx="12" cy="7" r="4"/>
+    </svg>
   );
 }
 

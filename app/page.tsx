@@ -5,6 +5,7 @@ import Link from "next/link";
 import { supabase } from "@/lib/supabase";
 import { Card, Eyebrow, Pill } from "@/components/ui";
 import { fmtRelativeDate, getStreakMilestone, WEEKDAY_LABELS } from "@/lib/utils";
+import { useProfile } from "@/components/ProfileProvider";
 import type { Mesocycle, Template, TemplateDay, WorkoutSession } from "@/lib/database.types";
 
 const WEEKDAYS = ["D", "S", "T", "Q", "Q", "S", "S"];
@@ -17,8 +18,10 @@ function getGreeting(): string {
 }
 
 export default function HomePage() {
+  const { profile, update } = useProfile();
+  const userName = profile?.display_name ?? "";
+  const weeklyGoal = profile?.weekly_goal ?? 4;
   const [loading, setLoading] = useState(true);
-  const [userName, setUserName] = useState("");
   const [editingName, setEditingName] = useState(false);
   const [nameInput, setNameInput] = useState("");
   const [activeMeso, setActiveMeso] = useState<Mesocycle | null>(null);
@@ -32,35 +35,29 @@ export default function HomePage() {
   const [streak, setStreak] = useState<number>(0);
   const [heatmapSessions, setHeatmapSessions] = useState<Set<string>>(new Set());
   const [activeSession, setActiveSession] = useState<{ id: string; started_at: string } | null>(null);
-  const [weeklyGoal, setWeeklyGoal] = useState<number>(4);
   const [editingGoal, setEditingGoal] = useState(false);
   const [goalInput, setGoalInput] = useState("4");
 
   useEffect(() => {
     loadDashboard();
-    const saved = localStorage.getItem("user_name") ?? "";
-    setUserName(saved);
-    setNameInput(saved);
-    const savedGoal = localStorage.getItem("weekly_goal");
-    if (savedGoal) {
-      const n = parseInt(savedGoal);
-      setWeeklyGoal(n);
-      setGoalInput(String(n));
-    }
   }, []);
 
-  function saveGoal() {
+  useEffect(() => {
+    if (profile) {
+      setNameInput(profile.display_name ?? "");
+      setGoalInput(String(profile.weekly_goal));
+    }
+  }, [profile]);
+
+  async function saveGoal() {
     const n = Math.max(1, Math.min(14, parseInt(goalInput) || 4));
-    setWeeklyGoal(n);
+    await update({ weekly_goal: n });
     setGoalInput(String(n));
-    localStorage.setItem("weekly_goal", String(n));
     setEditingGoal(false);
   }
 
-  function saveName() {
-    const n = nameInput.trim();
-    setUserName(n);
-    localStorage.setItem("user_name", n);
+  async function saveName() {
+    await update({ display_name: nameInput.trim() || null });
     setEditingName(false);
   }
 

@@ -1,0 +1,63 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512" fill="none">
+  <!-- Fundo: gradiente sutil escuro com leve azul -->
+  <defs>
+    <linearGradient id="bg" x1="0" y1="0" x2="512" y2="512" gradientUnits="userSpaceOnUse">
+      <stop offset="0%" stop-color="#0a1018"/>
+      <stop offset="100%" stop-color="#040607"/>
+    </linearGradient>
+    <linearGradient id="accent" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0%" stop-color="#98b5d2"/>
+      <stop offset="100%" stop-color="#4493e0"/>
+    </linearGradient>
+    <linearGradient id="shieldStroke" x1="0.5" y1="0" x2="0.5" y2="1">
+      <stop offset="0%" stop-color="#98b5d2"/>
+      <stop offset="100%" stop-color="#255480"/>
+    </linearGradient>
+  </defs>
+
+  <!-- Plano de fundo arredondado (estilo iOS) -->
+  <rect width="512" height="512" rx="112" ry="112" fill="url(#bg)"/>
+
+  <!-- Escudo angular (Sec) -->
+  <path
+    d="M256 80 L408 132 L408 264 C408 348 348 408 256 432 C164 408 104 348 104 264 L104 132 Z"
+    fill="none"
+    stroke="url(#shieldStroke)"
+    stroke-width="14"
+    stroke-linejoin="round"
+    opacity="0.55"
+  />
+
+  <!-- Halter horizontal — núcleo da marca -->
+  <g>
+    <!-- Barra central -->
+    <rect x="172" y="244" width="168" height="24" rx="4" fill="url(#accent)"/>
+
+    <!-- Anilha esquerda externa (grande) -->
+    <rect x="116" y="200" width="22" height="112" rx="5" fill="#98b5d2"/>
+    <!-- Anilha esquerda interna (menor) -->
+    <rect x="148" y="216" width="18" height="80" rx="4" fill="#4493e0"/>
+
+    <!-- Anilha direita externa -->
+    <rect x="374" y="200" width="22" height="112" rx="5" fill="#98b5d2"/>
+    <!-- Anilha direita interna -->
+    <rect x="346" y="216" width="18" height="80" rx="4" fill="#4493e0"/>
+  </g>
+
+  <!-- Letra F estilizada acima do halter (símbolo de força/progresso) -->
+  <g fill="#98b5d2" opacity="0.95">
+    <!-- F construído com retângulos geométricos -->
+    <rect x="222" y="138" width="14" height="78" rx="2"/>
+    <rect x="222" y="138" width="62" height="14" rx="2"/>
+    <rect x="222" y="172" width="44" height="12" rx="2"/>
+  </g>
+
+  <!-- Marcação de "progresso" — três barras crescentes no canto inferior -->
+  <g fill="#4493e0" opacity="0.85">
+    <rect x="200" y="354" width="18" height="22" rx="2"/>
+    <rect x="226" y="346" width="18" height="30" rx="2"/>
+    <rect x="252" y="334" width="18" height="42" rx="2"/>
+    <rect x="278" y="318" width="18" height="58" rx="2"/>
+  </g>
+</svg>

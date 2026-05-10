@@ -1,13 +1,22 @@
 {
   "name": "FitSec",
   "short_name": "FitSec",
-  "description": "Caderno de treino pessoal",
+  "description": "Seu caderno de treino. Sem assinatura.",
   "start_url": "/",
+  "scope": "/",
   "display": "standalone",
   "orientation": "portrait",
   "background_color": "#040607",
   "theme_color": "#040607",
+  "categories": ["fitness", "health", "lifestyle"],
+  "lang": "pt-BR",
   "icons": [
+    {
+      "src": "/icon.svg",
+      "sizes": "any",
+      "type": "image/svg+xml",
+      "purpose": "any"
+    },
     {
       "src": "/icon-192.png",
       "sizes": "192x192",
@@ -19,6 +28,26 @@
       "sizes": "512x512",
       "type": "image/png",
       "purpose": "any maskable"
+    },
+    {
+      "src": "/apple-touch-icon.png",
+      "sizes": "180x180",
+      "type": "image/png",
+      "purpose": "any"
+    }
+  ],
+  "shortcuts": [
+    {
+      "name": "Iniciar treino",
+      "short_name": "Treinar",
+      "url": "/sessao",
+      "icons": [{ "src": "/icon-192.png", "sizes": "192x192" }]
+    },
+    {
+      "name": "Stats",
+      "short_name": "Stats",
+      "url": "/stats",
+      "icons": [{ "src": "/icon-192.png", "sizes": "192x192" }]
     }
   ]
 }
