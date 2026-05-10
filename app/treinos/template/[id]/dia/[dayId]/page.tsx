@@ -8,6 +8,7 @@ import { Card, Eyebrow, Pill } from "@/components/ui";
 import { Button, EmptyState, Input, Spinner } from "@/components/Button";
 import { useConfirm } from "@/components/Toast";
 import { ExerciseItem } from "@/components/ExerciseItem";
+import { SortableList, DragHandle } from "@/components/SortableList";
 import { WEEKDAY_LABELS } from "@/lib/utils";
 import type { Exercise, TemplateDay, TemplateExercise } from "@/lib/database.types";
 
@@ -47,28 +48,18 @@ export default function DiaDetailPage() {
     setLoading(false);
   }
 
-  async function moveExercise(id: string, direction: "up" | "down") {
-    const idx = exercises.findIndex((e) => e.id === id);
-    if (idx < 0) return;
-    const swapIdx = direction === "up" ? idx - 1 : idx + 1;
-    if (swapIdx < 0 || swapIdx >= exercises.length) return;
+  async function reorderExercises(orderedIds: string[]) {
+    // Reordena localmente
+    const byId = new Map(exercises.map((e) => [e.id, e]));
+    const reordered = orderedIds.map((id, idx) => ({ ...byId.get(id)!, exercise_order: idx + 1 }));
+    setExercises(reordered);
 
-    const a = exercises[idx];
-    const b = exercises[swapIdx];
-    const orderA = a.exercise_order;
-    const orderB = b.exercise_order;
-
-    // Optimistic UI update
-    const newList = [...exercises];
-    newList[idx] = { ...a, exercise_order: orderB };
-    newList[swapIdx] = { ...b, exercise_order: orderA };
-    newList.sort((x, y) => x.exercise_order - y.exercise_order);
-    setExercises(newList);
-
-    await Promise.all([
-      supabase.from("template_exercises").update({ exercise_order: orderB } as any).eq("id", a.id),
-      supabase.from("template_exercises").update({ exercise_order: orderA } as any).eq("id", b.id),
-    ]);
+    // Persiste no banco em paralelo
+    await Promise.all(
+      reordered.map((e) =>
+        supabase.from("template_exercises").update({ exercise_order: e.exercise_order } as any).eq("id", e.id)
+      )
+    );
   }
 
   async function deleteExercise(id: string) {
@@ -151,66 +142,59 @@ export default function DiaDetailPage() {
         </Card>
       ) : (
         <div className="space-y-2 mb-3">
-          {exercises.map((ex, idx) => (
-            <Card key={ex.id} className="!p-3 mb-2">
-              <div className="flex items-start gap-3">
-                <div
-                  className="rounded-md flex items-center justify-center font-bold flex-shrink-0"
-                  style={{
-                    width: "28px",
-                    height: "28px",
-                    background: "rgba(152, 181, 210, 0.1)",
-                    color: "var(--primary)",
-                    fontSize: "13px",
-                  }}
-                >
-                  {idx + 1}
-                </div>
-                <div className="flex-1 min-w-0">
-                  <div className="font-medium text-sm">{ex.exercise.name}</div>
-                  <div className="flex gap-1 flex-wrap mt-1.5">
-                    <Pill variant="soft">
-                      {ex.prescribed_sets} × {ex.rep_range_min}-{ex.rep_range_max}
-                    </Pill>
-                    <Pill variant="soft">RIR {ex.target_rir}</Pill>
-                    <Pill variant="ghost">{ex.rest_seconds}s</Pill>
-                  </div>
-                </div>
-                <div className="flex flex-col gap-1">
-                  <div className="flex gap-1 justify-end mb-1">
-                    <button
-                      onClick={() => moveExercise(ex.id, "up")}
-                      disabled={idx === 0}
-                      style={{ color: idx === 0 ? "var(--faint)" : "var(--muted)", minHeight: "auto", padding: "2px 6px", fontSize: "13px" }}
+          <div className="text-xs mb-2" style={{ color: "var(--faint)" }}>
+            Arraste pelo ícone <span style={{ color: "var(--muted)" }}>⋮⋮</span> para reordenar
+          </div>
+          <SortableList items={exercises} onReorder={reorderExercises}>
+            {(ex, handle) => {
+              const idx = exercises.findIndex((e) => e.id === ex.id);
+              return (
+                <Card className="!p-3 mb-2">
+                  <div className="flex items-start gap-2">
+                    <DragHandle {...handle} />
+                    <div
+                      className="rounded-md flex items-center justify-center font-bold flex-shrink-0"
+                      style={{
+                        width: "28px",
+                        height: "28px",
+                        background: "rgba(152, 181, 210, 0.1)",
+                        color: "var(--primary)",
+                        fontSize: "13px",
+                      }}
                     >
-                      ↑
-                    </button>
-                    <button
-                      onClick={() => moveExercise(ex.id, "down")}
-                      disabled={idx === exercises.length - 1}
-                      style={{ color: idx === exercises.length - 1 ? "var(--faint)" : "var(--muted)", minHeight: "auto", padding: "2px 6px", fontSize: "13px" }}
-                    >
-                      ↓
-                    </button>
+                      {idx + 1}
+                    </div>
+                    <div className="flex-1 min-w-0">
+                      <div className="font-medium text-sm">{ex.exercise.name}</div>
+                      <div className="flex gap-1 flex-wrap mt-1.5">
+                        <Pill variant="soft">
+                          {ex.prescribed_sets} × {ex.rep_range_min}-{ex.rep_range_max}
+                        </Pill>
+                        <Pill variant="soft">RIR {ex.target_rir}</Pill>
+                        <Pill variant="ghost">{ex.rest_seconds}s</Pill>
+                      </div>
+                    </div>
+                    <div className="flex flex-col gap-1 flex-shrink-0">
+                      <button
+                        onClick={() => setEditing(ex)}
+                        className="text-xs"
+                        style={{ color: "var(--accent)", minHeight: "auto", padding: "4px 8px" }}
+                      >
+                        Editar
+                      </button>
+                      <button
+                        onClick={() => deleteExercise(ex.id)}
+                        className="text-xs"
+                        style={{ color: "#ff8888", minHeight: "auto", padding: "4px 8px" }}
+                      >
+                        Remover
+                      </button>
+                    </div>
                   </div>
-                  <button
-                    onClick={() => setEditing(ex)}
-                    className="text-xs"
-                    style={{ color: "var(--accent)", minHeight: "auto", padding: "4px 8px" }}
-                  >
-                    Editar
-                  </button>
-                  <button
-                    onClick={() => deleteExercise(ex.id)}
-                    className="text-xs"
-                    style={{ color: "#ff8888", minHeight: "auto", padding: "4px 8px" }}
-                  >
-                    Remover
-                  </button>
-                </div>
-              </div>
-            </Card>
-          ))}
+                </Card>
+              );
+            }}
+          </SortableList>
         </div>
       )}
 

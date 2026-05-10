@@ -10,6 +10,7 @@ import { useToast, useConfirm } from "@/components/Toast";
 import { fmtTimer, estimate1RM, fmtKg } from "@/lib/utils";
 import type { Exercise, SessionExercise, SessionSet, WorkoutSession } from "@/lib/database.types";
 import { AddExerciseToSessionModal } from "./AddExerciseModal";
+import { SortableList, DragHandle } from "@/components/SortableList";
 
 interface ExerciseWithSets extends SessionExercise {
   exercise: Exercise;
@@ -139,16 +140,15 @@ export default function SessaoAtivaPage() {
     setLoading(false);
   }
 
-  async function moveExercise(idx: number, dir: "up" | "down") {
-    const target = dir === "up" ? idx - 1 : idx + 1;
-    if (target < 0 || target >= exercises.length) return;
-    const next = [...exercises];
-    [next[idx], next[target]] = [next[target], next[idx]];
-    setExercises(next);
-    await Promise.all([
-      supabase.from("session_exercises").update({ exercise_order: target } as any).eq("id", next[target].id),
-      supabase.from("session_exercises").update({ exercise_order: idx } as any).eq("id", next[idx].id),
-    ]);
+  async function reorderExercises(orderedIds: string[]) {
+    const byId = new Map(exercises.map((e) => [e.id, e]));
+    const reordered = orderedIds.map((id, idx) => ({ ...byId.get(id)!, exercise_order: idx + 1 }));
+    setExercises(reordered);
+    await Promise.all(
+      reordered.map((e) =>
+        supabase.from("session_exercises").update({ exercise_order: e.exercise_order } as any).eq("id", e.id)
+      )
+    );
   }
 
   async function toggleSuperset(idx: number) {
@@ -552,27 +552,51 @@ export default function SessaoAtivaPage() {
         </Card>
       ) : (
         <div className="space-y-2 mb-3">
-          {exercises.map((ex, idx) => (
-            <ExerciseCard
-              key={ex.id}
-              exercise={ex}
-              isActive={idx === activeIdx}
-              isCompleted={ex.is_completed}
-              isReadOnly={isCompleted}
-              onActivate={() => setActiveIdx(idx)}
-              onAddSet={(weight, reps, rir, isWarmup, isFailure) => addSet(idx, weight, reps, rir, isWarmup, isFailure)}
-              onEditSet={(setId, weight, reps, rir) => editSet(idx, setId, weight, reps, rir)}
-              onDeleteSet={(setId) => deleteSet(idx, setId)}
-              onToggleCompleted={() => toggleCompleted(idx)}
-              onMoveUp={!isCompleted && idx > 0 ? () => moveExercise(idx, "up") : undefined}
-              onMoveDown={!isCompleted && idx < exercises.length - 1 ? () => moveExercise(idx, "down") : undefined}
-              onToggleSuperset={!isCompleted && idx > 0 ? () => toggleSuperset(idx) : undefined}
-              supersetWithPrev={ex.superset_group != null && idx > 0 && exercises[idx - 1].superset_group === ex.superset_group}
-              supersetWithNext={ex.superset_group != null && idx < exercises.length - 1 && exercises[idx + 1].superset_group === ex.superset_group}
-              mesoWeek={mesoWeek}
-              mesoTotalWeeks={mesoTotalWeeks}
-            />
-          ))}
+          {isCompleted ? (
+            exercises.map((ex, idx) => (
+              <ExerciseCard
+                key={ex.id}
+                exercise={ex}
+                isActive={idx === activeIdx}
+                isCompleted={ex.is_completed}
+                isReadOnly={isCompleted}
+                onActivate={() => setActiveIdx(idx)}
+                onAddSet={(weight, reps, rir, isWarmup, isFailure) => addSet(idx, weight, reps, rir, isWarmup, isFailure)}
+                onEditSet={(setId, weight, reps, rir) => editSet(idx, setId, weight, reps, rir)}
+                onDeleteSet={(setId) => deleteSet(idx, setId)}
+                onToggleCompleted={() => toggleCompleted(idx)}
+                supersetWithPrev={ex.superset_group != null && idx > 0 && exercises[idx - 1].superset_group === ex.superset_group}
+                supersetWithNext={ex.superset_group != null && idx < exercises.length - 1 && exercises[idx + 1].superset_group === ex.superset_group}
+                mesoWeek={mesoWeek}
+                mesoTotalWeeks={mesoTotalWeeks}
+              />
+            ))
+          ) : (
+            <SortableList items={exercises} onReorder={reorderExercises}>
+              {(ex, handle) => {
+                const idx = exercises.findIndex((e) => e.id === ex.id);
+                return (
+                  <ExerciseCard
+                    exercise={ex}
+                    isActive={idx === activeIdx}
+                    isCompleted={ex.is_completed}
+                    isReadOnly={isCompleted}
+                    onActivate={() => setActiveIdx(idx)}
+                    onAddSet={(weight, reps, rir, isWarmup, isFailure) => addSet(idx, weight, reps, rir, isWarmup, isFailure)}
+                    onEditSet={(setId, weight, reps, rir) => editSet(idx, setId, weight, reps, rir)}
+                    onDeleteSet={(setId) => deleteSet(idx, setId)}
+                    onToggleCompleted={() => toggleCompleted(idx)}
+                    onToggleSuperset={idx > 0 ? () => toggleSuperset(idx) : undefined}
+                    supersetWithPrev={ex.superset_group != null && idx > 0 && exercises[idx - 1].superset_group === ex.superset_group}
+                    supersetWithNext={ex.superset_group != null && idx < exercises.length - 1 && exercises[idx + 1].superset_group === ex.superset_group}
+                    mesoWeek={mesoWeek}
+                    mesoTotalWeeks={mesoTotalWeeks}
+                    dragHandle={handle}
+                  />
+                );
+              }}
+            </SortableList>
+          )}
         </div>
       )}
 
@@ -692,13 +716,12 @@ function ExerciseCard({
   onEditSet,
   onDeleteSet,
   onToggleCompleted,
-  onMoveUp,
-  onMoveDown,
   onToggleSuperset,
   supersetWithPrev,
   supersetWithNext,
   mesoWeek,
   mesoTotalWeeks,
+  dragHandle,
 }: {
   exercise: ExerciseWithSets;
   isActive: boolean;
@@ -709,13 +732,12 @@ function ExerciseCard({
   onEditSet: (setId: string, weight: number, reps: number, rir: number | null) => void;
   onDeleteSet: (setId: string) => void;
   onToggleCompleted: () => void;
-  onMoveUp?: () => void;
-  onMoveDown?: () => void;
   onToggleSuperset?: () => void;
   supersetWithPrev?: boolean;
   supersetWithNext?: boolean;
   mesoWeek?: number | null;
   mesoTotalWeeks?: number | null;
+  dragHandle?: import("@/components/SortableList").DragHandleProps;
 }) {
   const toast = useToast();
   const [weightNum, setWeightNum] = useState<number>(() => {
@@ -1045,43 +1067,32 @@ function ExerciseCard({
               </svg>
             </button>
           )}
-          {!isReadOnly && (onMoveUp || onMoveDown) && (
-            <div className="flex flex-col gap-1">
-              <button
-                onClick={(e) => { e.stopPropagation(); onMoveUp?.(); }}
-                disabled={!onMoveUp}
-                aria-label="Mover para cima"
-                className="rounded-md flex items-center justify-center"
-                style={{
-                  width: 28, height: 22, minHeight: "auto",
-                  background: onMoveUp ? "var(--surface)" : "transparent",
-                  border: onMoveUp ? "0.5px solid var(--border)" : "none",
-                  color: onMoveUp ? "var(--muted)" : "transparent",
-                  cursor: onMoveUp ? "pointer" : "default",
-                }}
-              >
-                <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="3" strokeLinecap="round" strokeLinejoin="round">
-                  <polyline points="18 15 12 9 6 15"/>
-                </svg>
-              </button>
-              <button
-                onClick={(e) => { e.stopPropagation(); onMoveDown?.(); }}
-                disabled={!onMoveDown}
-                aria-label="Mover para baixo"
-                className="rounded-md flex items-center justify-center"
-                style={{
-                  width: 28, height: 22, minHeight: "auto",
-                  background: onMoveDown ? "var(--surface)" : "transparent",
-                  border: onMoveDown ? "0.5px solid var(--border)" : "none",
-                  color: onMoveDown ? "var(--muted)" : "transparent",
-                  cursor: onMoveDown ? "pointer" : "default",
-                }}
-              >
-                <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="3" strokeLinecap="round" strokeLinejoin="round">
-                  <polyline points="6 9 12 15 18 9"/>
-                </svg>
-              </button>
-            </div>
+          {!isReadOnly && dragHandle && (
+            <button
+              type="button"
+              aria-label="Arrastar para reordenar"
+              onClick={(e) => e.stopPropagation()}
+              {...dragHandle.attributes}
+              {...(dragHandle.listeners ?? {})}
+              className="rounded-md flex items-center justify-center flex-shrink-0"
+              style={{
+                width: 28, height: 28, minHeight: "auto",
+                background: dragHandle.isDragging ? "var(--surface-strong)" : "var(--surface)",
+                border: "0.5px solid var(--border)",
+                color: dragHandle.isDragging ? "var(--primary)" : "var(--faint)",
+                cursor: dragHandle.isDragging ? "grabbing" : "grab",
+                touchAction: "none",
+              }}
+            >
+              <svg width="13" height="13" viewBox="0 0 24 24" fill="currentColor">
+                <circle cx="9" cy="6" r="1.5"/>
+                <circle cx="15" cy="6" r="1.5"/>
+                <circle cx="9" cy="12" r="1.5"/>
+                <circle cx="15" cy="12" r="1.5"/>
+                <circle cx="9" cy="18" r="1.5"/>
+                <circle cx="15" cy="18" r="1.5"/>
+              </svg>
+            </button>
           )}
           {!isReadOnly && (
             <button

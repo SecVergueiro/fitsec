@@ -59,6 +59,21 @@ export default function ResumoPage() {
     router.push("/historico");
   }
 
+  async function handleReopen() {
+    const ok = await confirm({
+      title: "Reabrir treino?",
+      message: "O treino volta a ficar em andamento e você pode editar tudo: exercícios, séries, ordem.",
+      confirmLabel: "Reabrir e editar",
+      danger: false,
+    });
+    if (!ok) return;
+    await supabase
+      .from("workout_sessions")
+      .update({ completed_at: null, ended_at: null, duration_minutes: null } as any)
+      .eq("id", sessionId);
+    router.push(`/sessao/${sessionId}`);
+  }
+
   useEffect(() => {
     load();
   }, [sessionId]);
@@ -413,6 +428,18 @@ export default function ResumoPage() {
           Editar
         </button>
         <button
+          onClick={handleReopen}
+          aria-label="Reabrir e editar treino"
+          title="Reabrir treino para edição completa (exercícios, séries, ordem)"
+          className="rounded-lg flex items-center justify-center"
+          style={{ width: 44, minHeight: 44, background: "var(--surface-strong)", color: "var(--accent)", border: "0.5px solid var(--border-strong)" }}
+        >
+          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+            <path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7"/>
+            <path d="M18.5 2.5a2.121 2.121 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z"/>
+          </svg>
+        </button>
+        <button
           onClick={handleShare}
           className="rounded-lg font-bold text-sm px-3"
           style={{ background: "var(--surface-strong)", color: "var(--muted)", border: "0.5px solid var(--border)", minHeight: "44px" }}
@@ -490,8 +517,13 @@ function EditSessionModal({
         style={{ background: "var(--background)", border: "0.5px solid var(--border-strong)", maxHeight: "90vh", overflowY: "auto" }}
         onClick={(e) => e.stopPropagation()}
       >
-        <div className="flex justify-between items-center mb-4">
-          <h2 className="text-base font-bold">Editar treino</h2>
+        <div className="flex justify-between items-start mb-4 gap-3">
+          <div>
+            <h2 className="text-base font-bold">Detalhes do treino</h2>
+            <p className="text-xs mt-0.5" style={{ color: "var(--faint)" }}>
+              Peso, energia e notas. Para editar séries use "Reabrir".
+            </p>
+          </div>
           <button onClick={onClose} style={{ color: "var(--muted)", minHeight: "auto" }}>✕</button>
         </div>
 
