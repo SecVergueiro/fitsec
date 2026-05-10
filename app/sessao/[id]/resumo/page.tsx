@@ -30,6 +30,7 @@ export default function ResumoPage() {
   const [summary, setSummary] = useState<ExSummary[]>([]);
   const [loading, setLoading] = useState(true);
   const [showEditModal, setShowEditModal] = useState(false);
+  const [prevVolume, setPrevVolume] = useState<{ tonnage: number; sets: number; dayName: string } | null>(null);
 
   async function handleShare() {
     // Marca a sessão como pública antes de compartilhar
@@ -126,6 +127,35 @@ export default function ResumoPage() {
     );
 
     setSummary(enriched);
+
+    // Comparativo de volume vs última sessão do mesmo template_day
+    const sd = sessionRes.data as WorkoutSession;
+    if (sd?.template_day_id) {
+      const { data: prevDaySession } = await supabase
+        .from("workout_sessions")
+        .select("id, template_days(name)")
+        .eq("template_day_id", sd.template_day_id)
+        .not("completed_at", "is", null)
+        .neq("id", sessionId)
+        .order("session_date", { ascending: false })
+        .limit(1)
+        .maybeSingle();
+
+      if (prevDaySession) {
+        const { data: prevSets } = await supabase
+          .from("session_sets")
+          .select("weight_kg, reps, is_warmup")
+          .eq("session_id", (prevDaySession as any).id);
+        const real = (prevSets as any[])?.filter((s) => !s.is_warmup) ?? [];
+        const prevTonnage = real.reduce((sum, s) => sum + s.weight_kg * s.reps, 0);
+        setPrevVolume({
+          tonnage: prevTonnage,
+          sets: real.length,
+          dayName: (prevDaySession as any).template_days?.name ?? "última sessão",
+        });
+      }
+    }
+
     setLoading(false);
   }
 
@@ -236,6 +266,39 @@ export default function ResumoPage() {
           <Stat label="Volume" value={fmtTonnage(tonnage)} />
         </div>
       </Card>
+
+      {/* Comparativo com última sessão do mesmo dia */}
+      {prevVolume && prevVolume.tonnage > 0 && (() => {
+        const deltaPct = ((tonnage - prevVolume.tonnage) / prevVolume.tonnage) * 100;
+        const deltaSets = allWorkingSets.length - prevVolume.sets;
+        const isUp = deltaPct >= 0;
+        const color = Math.abs(deltaPct) < 3 ? "var(--muted)" : isUp ? "var(--accent)" : "#ff8888";
+        return (
+          <Card className="mb-4">
+            <div className="flex items-center justify-between gap-3">
+              <div className="min-w-0">
+                <div className="text-xs font-bold mb-0.5" style={{ color: "var(--muted)", letterSpacing: "0.08em", textTransform: "uppercase" }}>
+                  vs última {prevVolume.dayName}
+                </div>
+                <div className="text-xs" style={{ color: "var(--faint)" }}>
+                  {fmtTonnage(prevVolume.tonnage)} · {prevVolume.sets} séries
+                </div>
+              </div>
+              <div className="text-right flex-shrink-0">
+                <div className="text-xl font-black tabular flex items-center gap-1" style={{ color }}>
+                  <span>{isUp ? "↑" : "↓"}</span>
+                  <span>{Math.abs(deltaPct).toFixed(0)}%</span>
+                </div>
+                {deltaSets !== 0 && (
+                  <div className="text-xs tabular" style={{ color: "var(--faint)" }}>
+                    {deltaSets > 0 ? "+" : ""}{deltaSets} {Math.abs(deltaSets) === 1 ? "série" : "séries"}
+                  </div>
+                )}
+              </div>
+            </div>
+          </Card>
+        );
+      })()}
 
       {/* Seção de PRs */}
       {prs.length > 0 && (

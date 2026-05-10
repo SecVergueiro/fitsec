@@ -118,6 +118,7 @@ export interface SessionExercise {
   rest_seconds: number | null;
   is_completed: boolean;
   notes: string | null;
+  superset_group: number | null;
   created_at: string;
   exercise?: Exercise;
 }

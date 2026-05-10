@@ -116,6 +116,44 @@ button, a[role="button"] {
   animation: scaleIn 0.2s cubic-bezier(0.25, 0.46, 0.45, 0.94);
 }
 
+/* Pulse celebratório — milestones de streak e PR */
+@keyframes celebratePulse {
+  0%   { transform: scale(1); box-shadow: 0 0 0 0 rgba(68, 147, 224, 0.5); }
+  50%  { transform: scale(1.05); box-shadow: 0 0 0 12px rgba(68, 147, 224, 0); }
+  100% { transform: scale(1); box-shadow: 0 0 0 0 rgba(68, 147, 224, 0); }
+}
+
+.celebrate-pulse {
+  animation: celebratePulse 1.6s cubic-bezier(0.25, 0.46, 0.45, 0.94) infinite;
+}
+
+/* Brilho horizontal sobre badges */
+@keyframes shimmer {
+  0%   { background-position: -200% 0; }
+  100% { background-position: 200% 0; }
+}
+
+.shimmer {
+  background: linear-gradient(90deg,
+    rgba(251, 191, 36, 0.1) 0%,
+    rgba(251, 191, 36, 0.35) 50%,
+    rgba(251, 191, 36, 0.1) 100%);
+  background-size: 200% 100%;
+  animation: shimmer 2.5s linear infinite;
+}
+
+/* Respeita a preferência de reduced motion do usuário */
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+    scroll-behavior: auto !important;
+  }
+}
+
 .fade-in {
   animation: fadeIn 0.22s cubic-bezier(0.25, 0.46, 0.45, 0.94);
 }

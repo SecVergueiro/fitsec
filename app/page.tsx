@@ -4,7 +4,7 @@ import { useEffect, useState } from "react";
 import Link from "next/link";
 import { supabase } from "@/lib/supabase";
 import { Card, Eyebrow, Pill } from "@/components/ui";
-import { fmtRelativeDate } from "@/lib/utils";
+import { fmtRelativeDate, getStreakMilestone, WEEKDAY_LABELS } from "@/lib/utils";
 import type { Mesocycle, Template, TemplateDay, WorkoutSession } from "@/lib/database.types";
 
 const WEEKDAYS = ["D", "S", "T", "Q", "Q", "S", "S"];
@@ -24,9 +24,11 @@ export default function HomePage() {
   const [activeMeso, setActiveMeso] = useState<Mesocycle | null>(null);
   const [activeTemplate, setActiveTemplate] = useState<Template | null>(null);
   const [todayDay, setTodayDay] = useState<TemplateDay | null>(null);
+  const [nextDay, setNextDay] = useState<{ day: TemplateDay; daysAhead: number; exerciseCount: number } | null>(null);
   const [todayExerciseCount, setTodayExerciseCount] = useState(0);
   const [weekSessions, setWeekSessions] = useState<WorkoutSession[]>([]);
   const [weeklyVolume, setWeeklyVolume] = useState<number | null>(null);
+  const [prevWeekVolume, setPrevWeekVolume] = useState<number | null>(null);
   const [streak, setStreak] = useState<number>(0);
   const [heatmapSessions, setHeatmapSessions] = useState<Set<string>>(new Set());
   const [activeSession, setActiveSession] = useState<{ id: string; started_at: string } | null>(null);
@@ -108,24 +110,39 @@ export default function HomePage() {
       setActiveTemplate(tpl);
     }
 
-    // 3. Dia de hoje (baseado em weekday)
+    // 3. Dia de hoje (baseado em weekday) + próximo treino
     const todayWeekday = new Date().getDay();
     if (templateId) {
-      const { data: dayData } = await supabase
+      const { data: allDays } = await supabase
         .from("template_days")
         .select("*")
         .eq("template_id", templateId)
-        .eq("weekday", todayWeekday)
-        .maybeSingle();
+        .not("weekday", "is", null);
 
-      setTodayDay(dayData);
+      const days = (allDays as TemplateDay[]) ?? [];
+      const today = days.find((d) => d.weekday === todayWeekday) ?? null;
+      setTodayDay(today);
 
-      if (dayData) {
+      if (today) {
         const { count } = await supabase
           .from("template_exercises")
           .select("*", { count: "exact", head: true })
-          .eq("template_day_id", dayData.id);
+          .eq("template_day_id", today.id);
         setTodayExerciseCount(count ?? 0);
+      } else {
+        // Procura próximo dia (até 7 dias à frente)
+        for (let i = 1; i <= 7; i++) {
+          const checkWeekday = (todayWeekday + i) % 7;
+          const found = days.find((d) => d.weekday === checkWeekday);
+          if (found) {
+            const { count } = await supabase
+              .from("template_exercises")
+              .select("*", { count: "exact", head: true })
+              .eq("template_day_id", found.id);
+            setNextDay({ day: found, daysAhead: i, exerciseCount: count ?? 0 });
+            break;
+          }
+        }
       }
     }
 
@@ -154,6 +171,30 @@ export default function HomePage() {
       setWeeklyVolume(total);
     } else {
       setWeeklyVolume(0);
+    }
+
+    // 5b. Volume da semana anterior — pra mostrar tendência ↑↓
+    const startPrevWeek = new Date(startOfWeek);
+    startPrevWeek.setDate(startPrevWeek.getDate() - 7);
+    const endPrevWeek = new Date(startOfWeek);
+    endPrevWeek.setDate(endPrevWeek.getDate() - 1);
+    const { data: prevSessions } = await supabase
+      .from("workout_sessions")
+      .select("id")
+      .gte("session_date", startPrevWeek.toISOString().slice(0, 10))
+      .lte("session_date", endPrevWeek.toISOString().slice(0, 10));
+
+    if (prevSessions && prevSessions.length > 0) {
+      const prevIds = prevSessions.map((s) => s.id);
+      const { data: prevSets } = await supabase
+        .from("session_sets")
+        .select("weight_kg, reps, is_warmup")
+        .in("session_id", prevIds);
+      const prevTotal =
+        prevSets?.filter((s) => !s.is_warmup).reduce((sum, s) => sum + s.weight_kg * s.reps, 0) ?? 0;
+      setPrevWeekVolume(prevTotal);
+    } else {
+      setPrevWeekVolume(0);
     }
 
     // 6. Sequência + heatmap — últimas 16 semanas (112 dias)
@@ -280,13 +321,30 @@ export default function HomePage() {
           </Card>
         </Link>
       ) : (
-        <Card variant="ghost" className="mb-4 text-center">
-          <div className="font-bold mb-1" style={{ color: "var(--primary)" }}>
-            Dia de descanso
+        <Card variant="ghost" className="mb-4">
+          <div className="flex items-center gap-2 mb-1">
+            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" style={{ color: "var(--primary)" }}>
+              <path d="M12 2v4M12 18v4M4.93 4.93l2.83 2.83M16.24 16.24l2.83 2.83M2 12h4M18 12h4M4.93 19.07l2.83-2.83M16.24 7.76l2.83-2.83"/>
+            </svg>
+            <span className="font-bold" style={{ color: "var(--primary)" }}>Dia de descanso</span>
           </div>
-          <div className="text-sm" style={{ color: "var(--muted)" }}>
-            Sem treino programado pra hoje
-          </div>
+          {nextDay ? (
+            <Link href="/treinos">
+              <div className="text-sm mb-1" style={{ color: "var(--muted)" }}>
+                Próximo treino: <span style={{ color: "var(--text)", fontWeight: 600 }}>{nextDay.day.name}</span>
+              </div>
+              <div className="text-xs" style={{ color: "var(--faint)" }}>
+                {nextDay.daysAhead === 1 ? "Amanhã" : `Em ${nextDay.daysAhead} dias`}
+                {" · "}
+                {WEEKDAY_LABELS[nextDay.day.weekday!]}
+                {nextDay.exerciseCount > 0 ? ` · ${nextDay.exerciseCount} exercícios` : ""}
+              </div>
+            </Link>
+          ) : (
+            <div className="text-sm" style={{ color: "var(--muted)" }}>
+              Sem treino programado pra hoje
+            </div>
+          )}
         </Card>
       )}
 
@@ -305,31 +363,82 @@ export default function HomePage() {
             <div className="text-2xl font-bold tabular mt-0.5">
               {weeklyVolume === null ? "—" : formatTonnage(weeklyVolume)}
             </div>
-            <div className="text-xs font-medium" style={{ color: "var(--accent)" }}>
-              {weekSessions.length} sessões
-            </div>
+            {/* Trend arrow vs semana anterior */}
+            {(() => {
+              if (weeklyVolume === null || prevWeekVolume === null) {
+                return (
+                  <div className="text-xs font-medium" style={{ color: "var(--accent)" }}>
+                    {weekSessions.length} sessões
+                  </div>
+                );
+              }
+              if (prevWeekVolume === 0) {
+                return (
+                  <div className="text-xs font-medium" style={{ color: "var(--accent)" }}>
+                    {weekSessions.length} sessões
+                  </div>
+                );
+              }
+              const delta = ((weeklyVolume - prevWeekVolume) / prevWeekVolume) * 100;
+              const isUp = delta >= 0;
+              const color = Math.abs(delta) < 5 ? "var(--muted)" : isUp ? "var(--accent)" : "#ff8888";
+              return (
+                <div className="flex items-center gap-1.5 mt-0.5">
+                  <span className="text-xs font-bold tabular" style={{ color }}>
+                    {isUp ? "↑" : "↓"} {Math.abs(delta).toFixed(0)}%
+                  </span>
+                  <span className="text-xs" style={{ color: "var(--faint)" }}>
+                    vs sem ant
+                  </span>
+                </div>
+              );
+            })()}
           </Card>
-          <Card className="!p-3">
-            <div className="text-xs" style={{ color: "var(--muted)" }}>
-              Sequência
-            </div>
-            <div className="flex items-baseline gap-1 mt-0.5">
-              <div className="text-2xl font-bold tabular">{streak}</div>
-              <div className="text-sm font-medium" style={{ color: "var(--muted)" }}>
-                {streak === 1 ? "dia" : "dias"}
-              </div>
-            </div>
-            <div
-              className="text-xs mt-0.5"
-              style={{ color: streak > 0 ? "var(--accent)" : "var(--faint)" }}
-            >
-              {streak === 0
-                ? "sem sequência"
-                : streak === 1
-                ? "dia seguido"
-                : "dias seguidos"}
-            </div>
-          </Card>
+          {(() => {
+            const milestone = getStreakMilestone(streak);
+            const justHitMilestone = milestone && [3, 7, 14, 30, 100, 365].includes(streak);
+            return (
+              <Card className="!p-3">
+                <div className="flex items-center justify-between">
+                  <span className="text-xs" style={{ color: "var(--muted)" }}>Sequência</span>
+                  {milestone && milestone.label && streak >= 3 && (
+                    <span
+                      className="text-xs font-bold tabular flex-shrink-0"
+                      style={{
+                        color: "#fbbf24",
+                        padding: "1px 6px",
+                        background: "rgba(251,191,36,0.1)",
+                        borderRadius: 4,
+                        fontSize: 9,
+                        letterSpacing: "0.06em",
+                        textTransform: "uppercase",
+                      }}
+                    >
+                      {milestone.label}
+                    </span>
+                  )}
+                </div>
+                <div
+                  className={`flex items-baseline gap-1 mt-0.5 ${justHitMilestone ? "celebrate-pulse" : ""}`}
+                  style={{ display: "inline-flex", borderRadius: 6 }}
+                >
+                  <div className="text-2xl font-bold tabular">{streak}</div>
+                  <div className="text-sm font-medium" style={{ color: "var(--muted)" }}>
+                    {streak === 1 ? "dia" : "dias"}
+                  </div>
+                </div>
+                <div className="text-xs mt-0.5" style={{ color: streak > 0 ? "var(--accent)" : "var(--faint)" }}>
+                  {streak === 0
+                    ? "sem sequência"
+                    : milestone && milestone.next < 999 && streak < milestone.next
+                    ? `+${milestone.next - streak} pra ${milestone.next} dias`
+                    : streak === 1
+                    ? "dia seguido"
+                    : "dias seguidos"}
+                </div>
+              </Card>
+            );
+          })()}
         </div>
       )}
 

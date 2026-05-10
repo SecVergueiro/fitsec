@@ -6,7 +6,7 @@ import { useParams } from "next/navigation";
 import { supabase } from "@/lib/supabase";
 import { Card, Eyebrow } from "@/components/ui";
 import { Spinner } from "@/components/Button";
-import { estimate1RM, fmtKg, fmtRelativeDate, MUSCLE_LABELS } from "@/lib/utils";
+import { estimate1RM, fmtKg, fmtRelativeDate, getStrengthLevel, MUSCLE_LABELS, STRENGTH_LEVEL_COLORS } from "@/lib/utils";
 import type { Exercise, SessionSet } from "@/lib/database.types";
 import {
   LineChart,
@@ -42,9 +42,11 @@ export default function ExerciseStatsPage() {
     load();
   }, [exerciseId]);
 
+  const [latestBodyweight, setLatestBodyweight] = useState<number | null>(null);
+
   async function load() {
     setLoading(true);
-    const [exRes, setsRes, mesoRes] = await Promise.all([
+    const [exRes, setsRes, mesoRes, bwRes] = await Promise.all([
       supabase.from("exercises").select("*").eq("id", exerciseId).single(),
       supabase
         .from("session_sets")
@@ -53,10 +55,18 @@ export default function ExerciseStatsPage() {
         .eq("is_warmup", false)
         .order("performed_at", { ascending: true }),
       supabase.from("mesocycles").select("id, name, start_date, end_date").order("start_date"),
+      supabase
+        .from("workout_sessions")
+        .select("bodyweight_kg")
+        .not("bodyweight_kg", "is", null)
+        .order("session_date", { ascending: false })
+        .limit(1)
+        .maybeSingle(),
     ]);
 
     setExercise(exRes.data as Exercise);
     setMesocycles((mesoRes.data as any[]) ?? []);
+    setLatestBodyweight((bwRes.data as any)?.bodyweight_kg ?? null);
     const enriched: SetWithE1RM[] = (setsRes.data as SessionSet[]).map((s) => ({
       ...s,
       e1rm: estimate1RM(s.weight_kg, s.reps),
@@ -166,6 +176,60 @@ export default function ExerciseStatsPage() {
               </div>
             </Card>
           </div>
+
+          {/* Strength Standard */}
+          {(() => {
+            if (!latestBodyweight) return null;
+            const std = getStrengthLevel(exercise.name, allTimeBest, latestBodyweight);
+            if (!std) return null;
+            const color = STRENGTH_LEVEL_COLORS[std.level];
+            const levels = ["iniciante", "novato", "intermediário", "avançado", "elite"];
+            const currentIdx = levels.indexOf(std.level);
+            return (
+              <Card className="mb-4">
+                <div className="flex items-center justify-between mb-2">
+                  <span className="text-xs font-bold" style={{ color: "var(--muted)", letterSpacing: "0.08em", textTransform: "uppercase" }}>
+                    Padrão de força
+                  </span>
+                  <span className="text-xs tabular" style={{ color: "var(--faint)" }}>
+                    {std.ratio.toFixed(2)}× BW
+                  </span>
+                </div>
+                <div className="flex items-baseline gap-2 mb-3">
+                  <span className="text-2xl font-black capitalize" style={{ color, letterSpacing: "-0.01em" }}>
+                    {std.level}
+                  </span>
+                </div>
+                {/* Barra de progressão */}
+                <div className="flex gap-1 mb-2">
+                  {levels.map((l, i) => (
+                    <div
+                      key={l}
+                      className="flex-1 h-1.5 rounded-full"
+                      style={{
+                        background: i <= currentIdx ? STRENGTH_LEVEL_COLORS[l as keyof typeof STRENGTH_LEVEL_COLORS] : "var(--surface-strong)",
+                      }}
+                    />
+                  ))}
+                </div>
+                <div className="flex justify-between text-xs" style={{ color: "var(--faint)" }}>
+                  <span className="capitalize">{levels[0]}</span>
+                  <span className="capitalize">{levels[4]}</span>
+                </div>
+                {std.nextLevel && std.nextWeight && (
+                  <div className="text-xs mt-3 pt-3" style={{ borderTop: "0.5px solid var(--border)", color: "var(--muted)" }}>
+                    Próximo nível: <span className="capitalize font-bold" style={{ color: STRENGTH_LEVEL_COLORS[std.nextLevel] }}>{std.nextLevel}</span>
+                    {" — "}
+                    <span className="tabular font-bold" style={{ color: "var(--text)" }}>{fmtKg(std.nextWeight)} kg</span>
+                    <span style={{ color: "var(--faint)" }}> e1RM</span>
+                  </div>
+                )}
+                <div className="text-xs mt-2" style={{ color: "var(--faint)" }}>
+                  Baseado em {fmtKg(latestBodyweight)}kg de peso corporal
+                </div>
+              </Card>
+            );
+          })()}
 
           {/* Grafico e1RM */}
           {sessionData.length > 1 && (

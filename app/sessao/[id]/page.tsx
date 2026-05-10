@@ -151,6 +151,48 @@ export default function SessaoAtivaPage() {
     ]);
   }
 
+  async function toggleSuperset(idx: number) {
+    // Vincula com o exercício de cima OU desfaz a vinculação se já estiver em superset
+    const ex = exercises[idx];
+    const prev = exercises[idx - 1];
+    if (!prev) {
+      toast.error("Não há exercício acima para vincular");
+      return;
+    }
+
+    if (ex.superset_group != null) {
+      // Já está em superset — remove
+      await supabase.from("session_exercises").update({ superset_group: null } as any).eq("id", ex.id);
+      setExercises((cur) => {
+        const next = [...cur];
+        next[idx] = { ...next[idx], superset_group: null };
+        return next;
+      });
+      toast.success("Superset desfeito");
+      return;
+    }
+
+    // Cria/junta superset com o exercício anterior
+    let group = prev.superset_group;
+    if (group == null) {
+      // Calcula próximo group disponível
+      const used = exercises.map((e) => e.superset_group).filter((g): g is number => g != null);
+      group = used.length === 0 ? 1 : Math.max(...used) + 1;
+      await supabase.from("session_exercises").update({ superset_group: group } as any).eq("id", prev.id);
+    }
+    await supabase.from("session_exercises").update({ superset_group: group } as any).eq("id", ex.id);
+
+    setExercises((cur) => {
+      const next = [...cur];
+      if (next[idx - 1].superset_group == null) {
+        next[idx - 1] = { ...next[idx - 1], superset_group: group! };
+      }
+      next[idx] = { ...next[idx], superset_group: group! };
+      return next;
+    });
+    toast.success("Superset criado");
+  }
+
   async function addSet(
     exIdx: number,
     weight: number,
@@ -471,10 +513,29 @@ export default function SessaoAtivaPage() {
         )}
       </div>
 
-      {/* Progresso */}
-      <div className="flex justify-between items-center mb-2">
-        <Eyebrow>Exercícios · {completedCount}/{exercises.length}</Eyebrow>
-        {isCompleted && <Pill variant="primary">FINALIZADA</Pill>}
+      {/* Progresso com barra visual */}
+      <div className="mb-3">
+        <div className="flex justify-between items-center mb-1.5">
+          <Eyebrow>Exercícios · {completedCount}/{exercises.length}</Eyebrow>
+          {isCompleted ? (
+            <Pill variant="primary">FINALIZADA</Pill>
+          ) : exercises.length > 0 && (
+            <span className="text-xs font-bold tabular" style={{ color: completedCount === exercises.length ? "var(--accent)" : "var(--muted)" }}>
+              {Math.round((completedCount / exercises.length) * 100)}%
+            </span>
+          )}
+        </div>
+        {exercises.length > 0 && (
+          <div className="h-1 rounded-full overflow-hidden" style={{ background: "var(--surface-strong)" }}>
+            <div
+              className="h-full rounded-full transition-all duration-300"
+              style={{
+                width: `${(completedCount / exercises.length) * 100}%`,
+                background: completedCount === exercises.length ? "var(--accent)" : "var(--primary)",
+              }}
+            />
+          </div>
+        )}
       </div>
 
       {exercises.length === 0 ? (
@@ -505,6 +566,9 @@ export default function SessaoAtivaPage() {
               onToggleCompleted={() => toggleCompleted(idx)}
               onMoveUp={!isCompleted && idx > 0 ? () => moveExercise(idx, "up") : undefined}
               onMoveDown={!isCompleted && idx < exercises.length - 1 ? () => moveExercise(idx, "down") : undefined}
+              onToggleSuperset={!isCompleted && idx > 0 ? () => toggleSuperset(idx) : undefined}
+              supersetWithPrev={ex.superset_group != null && idx > 0 && exercises[idx - 1].superset_group === ex.superset_group}
+              supersetWithNext={ex.superset_group != null && idx < exercises.length - 1 && exercises[idx + 1].superset_group === ex.superset_group}
               mesoWeek={mesoWeek}
               mesoTotalWeeks={mesoTotalWeeks}
             />
@@ -630,6 +694,9 @@ function ExerciseCard({
   onToggleCompleted,
   onMoveUp,
   onMoveDown,
+  onToggleSuperset,
+  supersetWithPrev,
+  supersetWithNext,
   mesoWeek,
   mesoTotalWeeks,
 }: {
@@ -644,6 +711,9 @@ function ExerciseCard({
   onToggleCompleted: () => void;
   onMoveUp?: () => void;
   onMoveDown?: () => void;
+  onToggleSuperset?: () => void;
+  supersetWithPrev?: boolean;
+  supersetWithNext?: boolean;
   mesoWeek?: number | null;
   mesoTotalWeeks?: number | null;
 }) {
@@ -668,6 +738,7 @@ function ExerciseCard({
   const [saving, setSaving] = useState(false);
   const [weightEditing, setWeightEditing] = useState(false);
   const [notes, setNotes] = useState(exercise.notes ?? "");
+  const [showNotes, setShowNotes] = useState((exercise.notes ?? "").trim().length > 0);
   const [showTips, setShowTips] = useState(false);
   const notesTimerRef = useRef<NodeJS.Timeout | null>(null);
 
@@ -787,25 +858,62 @@ function ExerciseCard({
   const muscleColor = MUSCLE_ACCENT[exercise.exercise.primary_muscle ?? ""] ?? "var(--border-strong)";
   const totalExpected = localSets || 3;
 
+  const inSuperset = supersetWithPrev || supersetWithNext;
+
   return (
     <div
       onClick={!isActive && !isReadOnly ? onActivate : undefined}
-      className="rounded-xl overflow-hidden"
+      className="overflow-hidden"
       style={{
         background: isActive ? "var(--surface-strong)" : "var(--surface)",
-        borderTop: isActive ? "0.5px solid var(--border-strong)" : "0.5px solid var(--border)",
+        borderTop: supersetWithPrev ? "none" : (isActive ? "0.5px solid var(--border-strong)" : "0.5px solid var(--border)"),
         borderRight: isActive ? "0.5px solid var(--border-strong)" : "0.5px solid var(--border)",
-        borderBottom: isActive ? "0.5px solid var(--border-strong)" : "0.5px solid var(--border)",
-        borderLeft: `3px solid ${isActive ? muscleColor : `${muscleColor}44`}`,
+        borderBottom: supersetWithNext ? "none" : (isActive ? "0.5px solid var(--border-strong)" : "0.5px solid var(--border)"),
+        borderLeft: `3px solid ${inSuperset ? "#a78bfa" : isActive ? muscleColor : `${muscleColor}44`}`,
+        borderTopLeftRadius: supersetWithPrev ? 0 : 12,
+        borderTopRightRadius: supersetWithPrev ? 0 : 12,
+        borderBottomLeftRadius: supersetWithNext ? 0 : 12,
+        borderBottomRightRadius: supersetWithNext ? 0 : 12,
+        marginTop: supersetWithPrev ? 0 : undefined,
         padding: "12px 14px 12px 12px",
         opacity: isCompleted ? 0.65 : 1,
         cursor: !isActive && !isReadOnly ? "pointer" : "default",
         transition: "border-color 0.2s ease, background 0.2s ease",
+        position: "relative",
       }}
     >
+      {/* Indicador visual de superset */}
+      {inSuperset && (
+        <div
+          style={{
+            position: "absolute",
+            top: supersetWithPrev ? -1 : 8,
+            bottom: supersetWithNext ? -1 : 8,
+            left: -3,
+            width: 3,
+            background: "#a78bfa",
+          }}
+        />
+      )}
       <div className="flex justify-between items-start gap-2 mb-2">
         <div className="flex-1 min-w-0">
-          <div className="flex items-center gap-1.5">
+          <div className="flex items-center gap-1.5 flex-wrap">
+            {inSuperset && (
+              <span
+                className="text-xs font-bold flex-shrink-0"
+                style={{
+                  padding: "1px 6px",
+                  background: "rgba(167, 139, 250, 0.15)",
+                  color: "#a78bfa",
+                  borderRadius: 4,
+                  fontSize: 9,
+                  letterSpacing: "0.08em",
+                  textTransform: "uppercase",
+                }}
+              >
+                Superset
+              </span>
+            )}
             <div className="font-bold text-sm">{exercise.exercise.name}</div>
             {exercise.exercise.notes && (
               <button
@@ -915,22 +1023,63 @@ function ExerciseCard({
             </div>
           )}
         </div>
-        <div className="flex items-center gap-1 flex-shrink-0">
+        <div className="flex items-center gap-1.5 flex-shrink-0">
+          {/* Botão superset */}
+          {!isReadOnly && onToggleSuperset && (
+            <button
+              onClick={(e) => { e.stopPropagation(); onToggleSuperset(); }}
+              aria-label={inSuperset ? "Desfazer superset" : "Vincular ao anterior como superset"}
+              title={inSuperset ? "Desfazer superset" : "Vincular ao anterior como superset"}
+              className="rounded-md flex items-center justify-center"
+              style={{
+                width: 28, height: 28, minHeight: "auto",
+                background: inSuperset ? "rgba(167, 139, 250, 0.15)" : "var(--surface)",
+                border: `0.5px solid ${inSuperset ? "rgba(167, 139, 250, 0.5)" : "var(--border)"}`,
+                color: inSuperset ? "#a78bfa" : "var(--faint)",
+                cursor: "pointer",
+              }}
+            >
+              <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
+                <path d="M10 13a5 5 0 0 0 7.54.54l3-3a5 5 0 0 0-7.07-7.07l-1.72 1.71"/>
+                <path d="M14 11a5 5 0 0 0-7.54-.54l-3 3a5 5 0 0 0 7.07 7.07l1.71-1.71"/>
+              </svg>
+            </button>
+          )}
           {!isReadOnly && (onMoveUp || onMoveDown) && (
-            <div className="flex flex-col gap-0.5">
+            <div className="flex flex-col gap-1">
               <button
                 onClick={(e) => { e.stopPropagation(); onMoveUp?.(); }}
                 disabled={!onMoveUp}
-                style={{ color: onMoveUp ? "var(--faint)" : "transparent", fontSize: 10, minHeight: "auto", lineHeight: 1, padding: "2px" }}
+                aria-label="Mover para cima"
+                className="rounded-md flex items-center justify-center"
+                style={{
+                  width: 28, height: 22, minHeight: "auto",
+                  background: onMoveUp ? "var(--surface)" : "transparent",
+                  border: onMoveUp ? "0.5px solid var(--border)" : "none",
+                  color: onMoveUp ? "var(--muted)" : "transparent",
+                  cursor: onMoveUp ? "pointer" : "default",
+                }}
               >
-                ▲
+                <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="3" strokeLinecap="round" strokeLinejoin="round">
+                  <polyline points="18 15 12 9 6 15"/>
+                </svg>
               </button>
               <button
                 onClick={(e) => { e.stopPropagation(); onMoveDown?.(); }}
                 disabled={!onMoveDown}
-                style={{ color: onMoveDown ? "var(--faint)" : "transparent", fontSize: 10, minHeight: "auto", lineHeight: 1, padding: "2px" }}
+                aria-label="Mover para baixo"
+                className="rounded-md flex items-center justify-center"
+                style={{
+                  width: 28, height: 22, minHeight: "auto",
+                  background: onMoveDown ? "var(--surface)" : "transparent",
+                  border: onMoveDown ? "0.5px solid var(--border)" : "none",
+                  color: onMoveDown ? "var(--muted)" : "transparent",
+                  cursor: onMoveDown ? "pointer" : "default",
+                }}
               >
-                ▼
+                <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="3" strokeLinecap="round" strokeLinejoin="round">
+                  <polyline points="6 9 12 15 18 9"/>
+                </svg>
               </button>
             </div>
           )}
@@ -940,17 +1089,20 @@ function ExerciseCard({
                 e.stopPropagation();
                 onToggleCompleted();
               }}
-              className="rounded-md flex items-center justify-center"
+              aria-label={isCompleted ? "Desmarcar como concluído" : "Marcar como concluído"}
+              className="rounded-lg flex items-center justify-center"
               style={{
-                width: "28px",
-                height: "28px",
-                minHeight: "28px",
-                background: isCompleted ? "var(--primary)" : "var(--surface)",
+                width: 44, height: 44, minHeight: 44,
+                background: isCompleted ? "var(--accent)" : "var(--surface)",
                 color: isCompleted ? "var(--background)" : "var(--muted)",
-                border: "0.5px solid var(--border-strong)",
+                border: `1px solid ${isCompleted ? "var(--accent)" : "var(--border-strong)"}`,
+                cursor: "pointer",
+                transition: "all 0.15s ease",
               }}
             >
-              ✓
+              <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="3" strokeLinecap="round" strokeLinejoin="round">
+                <polyline points="20 6 9 17 4 12"/>
+              </svg>
             </button>
           )}
         </div>
@@ -1374,14 +1526,46 @@ function ExerciseCard({
             </div>
           </div>
 
-          <textarea
-            value={notes}
-            onChange={(e) => handleNotesChange(e.target.value)}
-            placeholder="Notas do exercício..."
-            rows={1}
-            className="w-full rounded-xl px-3 py-2.5 text-xs resize-none mb-3"
-            style={{ background: "var(--background)", border: "0.5px solid var(--border)", color: "var(--muted)", outline: "none" }}
-          />
+          {/* Notas — colapsado por padrão */}
+          {!showNotes ? (
+            <button
+              onClick={() => setShowNotes(true)}
+              className="w-full rounded-xl text-xs font-bold mb-3"
+              style={{
+                height: 40,
+                background: "transparent",
+                border: "0.5px dashed var(--border-strong)",
+                color: "var(--faint)",
+                cursor: "pointer",
+                letterSpacing: "0.06em",
+                transition: "all 0.12s ease",
+              }}
+            >
+              + Adicionar nota
+            </button>
+          ) : (
+            <div className="mb-3">
+              <div className="flex items-center gap-2 mb-1.5">
+                <span className="text-xs font-bold" style={{ color: "var(--faint)", letterSpacing: "0.1em", textTransform: "uppercase" }}>Nota</span>
+                <button
+                  onClick={() => { setShowNotes(false); if (notes.trim() === "") handleNotesChange(""); }}
+                  style={{ marginLeft: "auto", color: "var(--faint)", fontSize: 14, minHeight: "auto", cursor: "pointer", lineHeight: 1 }}
+                  aria-label="Recolher nota"
+                >
+                  ×
+                </button>
+              </div>
+              <textarea
+                value={notes}
+                onChange={(e) => handleNotesChange(e.target.value)}
+                placeholder="Ex: ombro travando hoje, foco na excêntrica..."
+                rows={2}
+                autoFocus={notes.length === 0}
+                className="w-full rounded-xl px-3 py-2.5 text-xs resize-none"
+                style={{ background: "var(--background)", border: "0.5px solid var(--border)", color: "var(--text)", outline: "none" }}
+              />
+            </div>
+          )}
 
           {/* ── BOTÃO SALVAR ── */}
           <button
