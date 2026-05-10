@@ -415,7 +415,9 @@ export default function StatsPage() {
               className="rounded-xl px-4 py-3 mb-4 flex items-start gap-3"
               style={{ background: "rgba(251,191,36,0.08)", border: "0.5px solid rgba(251,191,36,0.3)" }}
             >
-              <span style={{ color: "#fbbf24", fontSize: 18, lineHeight: 1 }}>⚡</span>
+              <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="#fbbf24" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round" style={{ flexShrink: 0, marginTop: 1 }}>
+                <polygon points="13 2 3 14 12 14 11 22 21 10 12 10 13 2"/>
+              </svg>
               <div>
                 <div className="text-sm font-bold" style={{ color: "#fbbf24" }}>Volume abaixo do normal</div>
                 <div className="text-xs mt-0.5" style={{ color: "var(--muted)" }}>

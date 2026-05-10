@@ -376,7 +376,12 @@ export default function HomePage() {
             />
           </div>
           {weekSessions.filter((s) => s.completed_at).length >= weeklyGoal && (
-            <div className="text-xs mt-1.5 font-medium" style={{ color: "var(--accent)" }}>Meta atingida! 🎯</div>
+            <div className="text-xs mt-1.5 font-medium flex items-center gap-1" style={{ color: "var(--accent)" }}>
+              <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
+                <circle cx="12" cy="12" r="10"/><circle cx="12" cy="12" r="6"/><circle cx="12" cy="12" r="2"/>
+              </svg>
+              Meta atingida!
+            </div>
           )}
         </div>
       )}

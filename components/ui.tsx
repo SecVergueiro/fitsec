@@ -48,6 +48,7 @@ export function Card({
       style={{
         ...variants[variant],
         cursor: onClick ? "pointer" : undefined,
+        transition: onClick ? "opacity 0.15s ease, border-color 0.15s ease, background 0.15s ease" : undefined,
       }}
     >
       {children}

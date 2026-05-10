@@ -387,11 +387,16 @@ export default function SessaoAtivaPage() {
             {!isCompleted && (
               <button
                 onClick={() => setShowSessionInfo(true)}
-                className="text-xs font-medium"
-                style={{ color: "var(--faint)", minHeight: "auto" }}
+                style={{ color: "var(--faint)", minHeight: "auto", display: "flex", alignItems: "center" }}
                 title="Dados da sessão"
               >
-                📋
+                <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                  <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/>
+                  <polyline points="14 2 14 8 20 8"/>
+                  <line x1="16" y1="13" x2="8" y2="13"/>
+                  <line x1="16" y1="17" x2="8" y2="17"/>
+                  <polyline points="10 9 9 9 8 9"/>
+                </svg>
               </button>
             )}
           </div>
@@ -588,6 +593,24 @@ export default function SessaoAtivaPage() {
   );
 }
 
+// Acento por grupo muscular
+const MUSCLE_ACCENT: Record<string, string> = {
+  peito: "#ef4444",
+  costas: "#3b82f6",
+  ombro: "#f59e0b",
+  ombro_anterior: "#fbbf24",
+  ombro_posterior: "#f97316",
+  biceps: "#8b5cf6",
+  triceps: "#a78bfa",
+  antebraco: "#6366f1",
+  quadriceps: "#22c55e",
+  posterior: "#16a34a",
+  gluteo: "#f97316",
+  panturrilha: "#10b981",
+  core: "#06b6d4",
+  lombar: "#0891b2",
+};
+
 // ============================================================
 // Card de cada exercicio com input de series
 // ============================================================
@@ -621,9 +644,19 @@ function ExerciseCard({
   mesoTotalWeeks?: number | null;
 }) {
   const toast = useToast();
-  const [weight, setWeight] = useState("");
-  const [reps, setReps] = useState("");
-  const [rir, setRir] = useState("");
+  const [weightNum, setWeightNum] = useState<number>(() => {
+    const lastSet = [...exercise.sets].reverse().find((s) => !s.is_warmup);
+    if (lastSet) return lastSet.weight_kg;
+    if (exercise.prevBest) return exercise.prevBest.weight;
+    return 0;
+  });
+  const [repsNum, setRepsNum] = useState<number>(() => {
+    const lastSet = [...exercise.sets].reverse().find((s) => !s.is_warmup);
+    if (lastSet) return lastSet.reps;
+    if (exercise.prevBest) return exercise.prevBest.reps;
+    return exercise.rep_range_min ?? 8;
+  });
+  const [rirNum, setRirNum] = useState<number | null>(null);
   const [isWarmup, setIsWarmup] = useState(false);
   const [isFailure, setIsFailure] = useState(false);
   const [saving, setSaving] = useState(false);
@@ -697,32 +730,27 @@ function ExerciseCard({
 
   useEffect(() => {
     const lastSet = [...exercise.sets].reverse().find((s) => !s.is_warmup);
-    if (lastSet && !weight) {
-      setWeight(String(lastSet.weight_kg));
-      if (!reps) setReps(String(lastSet.reps));
-      if (lastSet.rir != null && !rir) setRir(String(lastSet.rir));
-    } else if (!lastSet && exercise.prevBest && !weight) {
-      setWeight(String(exercise.prevBest.weight));
-      if (!reps) setReps(String(exercise.prevBest.reps));
+    if (lastSet) {
+      setWeightNum(lastSet.weight_kg);
+      setRepsNum(lastSet.reps);
+      if (lastSet.rir != null) setRirNum(lastSet.rir);
+    } else if (exercise.prevBest && exercise.sets.length === 0) {
+      setWeightNum(exercise.prevBest.weight);
+      setRepsNum(exercise.prevBest.reps);
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [exercise.sets.length]);
 
   async function handleSave() {
-    const w = parseFloat(weight);
-    const r = parseInt(reps);
-    const rirVal = rir ? parseInt(rir) : null;
-    if (!w || w <= 0 || !r || r <= 0) {
+    if (weightNum <= 0 || repsNum <= 0) {
       toast.error("Informe peso e reps válidos");
       return;
     }
     setSaving(true);
-    const success = await onAddSet(w, r, rirVal, isWarmup, isFailure);
+    const success = await onAddSet(weightNum, repsNum, rirNum, isWarmup, isFailure);
     if (success) {
-      toast.success(isWarmup ? "Aquecimento salvo" : isFailure ? "Falha registrada" : "Série salva");
       if ("vibrate" in navigator) navigator.vibrate(30);
-      setReps("");
-      setRir("");
+      setRirNum(null);
       setIsWarmup(false);
       setIsFailure(false);
     }
@@ -742,24 +770,30 @@ function ExerciseCard({
 
   function fillWarmup(pct: number, warmupReps: number) {
     const w = Math.round((warmupBase * pct) / 2.5) * 2.5;
-    setWeight(String(w > 0 ? w : warmupBase * pct));
-    setReps(String(warmupReps));
+    setWeightNum(w > 0 ? w : Math.round(warmupBase * pct * 10) / 10);
+    setRepsNum(warmupReps);
     setIsWarmup(true);
   }
 
   const realSets = exercise.sets.filter((s) => !s.is_warmup);
   const warmupSets = exercise.sets.filter((s) => s.is_warmup);
+  const muscleColor = MUSCLE_ACCENT[exercise.exercise.primary_muscle ?? ""] ?? "var(--border-strong)";
+  const totalExpected = localSets || 3;
 
   return (
     <div
       onClick={!isActive && !isReadOnly ? onActivate : undefined}
-      className="rounded-xl"
+      className="rounded-xl overflow-hidden"
       style={{
         background: isActive ? "var(--surface-strong)" : "var(--surface)",
-        border: isActive ? "0.5px solid var(--border-strong)" : "0.5px solid var(--border)",
-        padding: "12px 14px",
+        borderTop: isActive ? "0.5px solid var(--border-strong)" : "0.5px solid var(--border)",
+        borderRight: isActive ? "0.5px solid var(--border-strong)" : "0.5px solid var(--border)",
+        borderBottom: isActive ? "0.5px solid var(--border-strong)" : "0.5px solid var(--border)",
+        borderLeft: `3px solid ${isActive ? muscleColor : `${muscleColor}44`}`,
+        padding: "12px 14px 12px 12px",
         opacity: isCompleted ? 0.65 : 1,
         cursor: !isActive && !isReadOnly ? "pointer" : "default",
+        transition: "border-color 0.2s ease, background 0.2s ease",
       }}
     >
       <div className="flex justify-between items-start gap-2 mb-2">
@@ -847,15 +881,28 @@ function ExerciseCard({
                 </Pill>
               )}
               {localRIR != null && <Pill variant="soft">RIR {localRIR}</Pill>}
-              <Pill variant="ghost">
-                {realSets.length}/{localSets || "?"}
-              </Pill>
+              {/* Progress dots */}
+              <div className="flex gap-1 items-center ml-0.5">
+                {Array.from({ length: Math.max(totalExpected, realSets.length) }, (_, i) => (
+                  <div
+                    key={i}
+                    style={{
+                      width: 7, height: 7, borderRadius: "50%",
+                      background: i < realSets.length ? muscleColor : "var(--border-strong)",
+                      transition: "background 0.2s ease",
+                    }}
+                  />
+                ))}
+              </div>
               {!isReadOnly && isActive && (
                 <button
                   onClick={(e) => { e.stopPropagation(); setEditingPrescription(true); }}
-                  style={{ color: "var(--faint)", fontSize: 11, minHeight: "auto", padding: "1px 4px" }}
+                  style={{ color: "var(--faint)", fontSize: 11, minHeight: "auto", padding: "1px 4px", cursor: "pointer" }}
                 >
-                  ✎
+                  <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
+                    <path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7"/>
+                    <path d="M18.5 2.5a2.121 2.121 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z"/>
+                  </svg>
                 </button>
               )}
             </div>
@@ -954,9 +1001,8 @@ function ExerciseCard({
               Última sessão
             </span>
             {(() => {
-              const w = parseFloat(weight);
-              if (!weight || isNaN(w)) return null;
-              const delta = w - exercise.prevSession!.maxWeight;
+              if (!weightNum || weightNum <= 0) return null;
+              const delta = weightNum - exercise.prevSession!.maxWeight;
               if (delta === 0) return null;
               return (
                 <span className="text-xs font-bold tabular" style={{ color: delta > 0 ? "var(--accent)" : "#ff8888" }}>
@@ -989,9 +1035,9 @@ function ExerciseCard({
             <span className="text-xs ml-2" style={{ color: "var(--muted)" }}>{loadSuggestion.tip}</span>
           </div>
           <button
-            onClick={(e) => { e.stopPropagation(); setWeight(String(loadSuggestion.kg)); }}
+            onClick={(e) => { e.stopPropagation(); setWeightNum(loadSuggestion.kg); }}
             className="text-xs font-bold tabular px-2.5 py-1 rounded-lg"
-            style={{ background: "rgba(68,147,224,0.1)", color: "var(--accent)", border: "0.5px solid rgba(68,147,224,0.25)", minHeight: "auto" }}
+            style={{ background: "rgba(68,147,224,0.1)", color: "var(--accent)", border: "0.5px solid rgba(68,147,224,0.25)", minHeight: "auto", cursor: "pointer" }}
           >
             {fmtKg(loadSuggestion.kg)} kg →
           </button>
@@ -1000,14 +1046,12 @@ function ExerciseCard({
 
       {/* Form de adicionar série */}
       {isActive && !isCompleted && !isReadOnly && (
-        <div className="mt-3" onClick={(e) => e.stopPropagation()}>
+        <div className="mt-3 pt-3" style={{ borderTop: "0.5px solid var(--border)" }} onClick={(e) => e.stopPropagation()}>
+
           {/* Aquecimento sugerido */}
           {warmupBase > 0 && (
-            <div className="mb-3 pt-2" style={{ borderTop: "0.5px solid var(--border)" }}>
-              <div
-                className="text-xs font-bold mb-2"
-                style={{ color: "var(--faint)", letterSpacing: "0.08em", textTransform: "uppercase" }}
-              >
+            <div className="mb-4">
+              <div className="text-xs font-bold mb-2" style={{ color: "var(--faint)", letterSpacing: "0.08em", textTransform: "uppercase" }}>
                 Aquecimento · base {fmtKg(warmupBase)} kg
               </div>
               <div className="flex gap-2">
@@ -1018,19 +1062,11 @@ function ExerciseCard({
                 ].map(({ pct, warmupReps, label }) => {
                   const w = Math.round((warmupBase * pct) / 2.5) * 2.5;
                   return (
-                    <button
-                      key={pct}
-                      onClick={() => fillWarmup(pct, warmupReps)}
-                      className="flex-1 py-1.5 rounded-lg text-xs font-medium"
-                      style={{
-                        background: "var(--background)",
-                        border: "0.5px solid var(--border-strong)",
-                        color: "var(--muted)",
-                        minHeight: "auto",
-                      }}
-                    >
-                      <div style={{ color: "var(--text)" }}>{fmtKg(w)}</div>
-                      <div style={{ color: "var(--faint)" }}>×{warmupReps} · {label}</div>
+                    <button key={pct} onClick={() => fillWarmup(pct, warmupReps)}
+                      className="flex-1 rounded-lg text-xs font-medium"
+                      style={{ background: "var(--background)", border: "0.5px solid var(--border-strong)", color: "var(--muted)", padding: "8px 4px", cursor: "pointer" }}>
+                      <div style={{ color: "var(--text)", fontWeight: 700 }}>{fmtKg(w)}</div>
+                      <div style={{ color: "var(--faint)", marginTop: 2 }}>×{warmupReps} · {label}</div>
                     </button>
                   );
                 })}
@@ -1038,73 +1074,134 @@ function ExerciseCard({
             </div>
           )}
 
-          {/* Inputs kg / reps / RIR */}
-          <div
-            className="grid items-center mb-2"
-            style={{ gridTemplateColumns: "1fr 1fr 1fr", gap: "8px" }}
-          >
-            <input
-              type="number"
-              inputMode="decimal"
-              value={weight}
-              onChange={(e) => setWeight(e.target.value)}
-              placeholder="kg"
-              step="0.5"
-              className="text-center font-bold tabular text-sm rounded-md py-2"
-              style={{
-                background: "var(--background)",
-                border: "0.5px solid var(--border-strong)",
-                color: "var(--text)",
-                outline: "none",
-                minHeight: "44px",
-              }}
-            />
-            <input
-              type="number"
-              inputMode="numeric"
-              value={reps}
-              onChange={(e) => setReps(e.target.value)}
-              placeholder="reps"
-              className="text-center font-bold tabular text-sm rounded-md py-2"
-              style={{
-                background: "var(--background)",
-                border: "0.5px solid var(--border-strong)",
-                color: "var(--text)",
-                outline: "none",
-                minHeight: "44px",
-              }}
-            />
-            <input
-              type="number"
-              inputMode="numeric"
-              value={rir}
-              onChange={(e) => setRir(e.target.value)}
-              placeholder="RIR"
-              className="text-center font-bold tabular text-sm rounded-md py-2"
-              style={{
-                background: "var(--background)",
-                border: "0.5px solid var(--border-strong)",
-                color: "var(--text)",
-                outline: "none",
-                minHeight: "44px",
-              }}
-            />
+          {/* ── PESO ── */}
+          <div className="mb-4">
+            <div className="flex items-baseline justify-between mb-2">
+              <span className="text-xs font-bold" style={{ color: "var(--faint)", letterSpacing: "0.1em", textTransform: "uppercase" }}>Peso</span>
+              {weightNum > 0 && (
+                <span className="text-3xl font-black tabular" style={{ color: "var(--text)", letterSpacing: "-0.02em" }}>
+                  {fmtKg(weightNum)} <span className="text-base font-bold" style={{ color: "var(--muted)" }}>kg</span>
+                </span>
+              )}
+              {weightNum <= 0 && <span className="text-3xl font-black" style={{ color: "var(--border-strong)" }}>—</span>}
+            </div>
+            <div className="grid grid-cols-4 gap-1.5">
+              {[
+                { label: "−2.5", delta: -2.5, accent: false },
+                { label: "−0.5", delta: -0.5, accent: false },
+                { label: "+0.5", delta: 0.5, accent: true },
+                { label: "+2.5", delta: 2.5, accent: true },
+              ].map(({ label, delta, accent }) => (
+                <button
+                  key={label}
+                  onClick={() => setWeightNum((w) => Math.max(0, Math.round((w + delta) * 10) / 10))}
+                  className="rounded-xl font-bold text-sm"
+                  style={{
+                    height: 48,
+                    background: accent ? `${muscleColor}18` : "var(--background)",
+                    border: `0.5px solid ${accent ? `${muscleColor}44` : "var(--border-strong)"}`,
+                    color: accent ? muscleColor : "var(--muted)",
+                    cursor: "pointer",
+                    transition: "all 0.12s ease",
+                  }}
+                >
+                  {label}
+                </button>
+              ))}
+            </div>
+            {/* Plate calc */}
+            {weightNum > 20 && (() => {
+              const hint = calcPlates(weightNum);
+              if (!hint) return null;
+              return <div className="text-xs mt-2 tabular" style={{ color: "var(--faint)" }}>Barra 20 + {hint} / lado</div>;
+            })()}
           </div>
 
-          <div className="flex gap-2 items-center mb-2">
+          {/* ── REPS ── */}
+          <div className="mb-4">
+            <div className="text-xs font-bold mb-2" style={{ color: "var(--faint)", letterSpacing: "0.1em", textTransform: "uppercase" }}>Reps</div>
+            <div className="flex items-center gap-3 mb-2">
+              <button
+                onClick={() => setRepsNum((r) => Math.max(1, r - 1))}
+                className="rounded-xl flex items-center justify-center font-bold text-xl flex-shrink-0"
+                style={{ width: 52, height: 52, background: "var(--background)", border: "0.5px solid var(--border-strong)", color: "var(--muted)", cursor: "pointer" }}
+              >
+                −
+              </button>
+              <div className="flex-1 text-center">
+                <span className="text-4xl font-black tabular" style={{ color: repsNum > 0 ? "var(--text)" : "var(--border-strong)", letterSpacing: "-0.03em" }}>
+                  {repsNum > 0 ? repsNum : "—"}
+                </span>
+              </div>
+              <button
+                onClick={() => setRepsNum((r) => Math.min(100, r + 1))}
+                className="rounded-xl flex items-center justify-center font-bold text-xl flex-shrink-0"
+                style={{ width: 52, height: 52, background: `${muscleColor}18`, border: `0.5px solid ${muscleColor}44`, color: muscleColor, cursor: "pointer" }}
+              >
+                +
+              </button>
+            </div>
+            <div className="grid grid-cols-4 gap-1.5">
+              {[6, 8, 10, 12].map((n) => (
+                <button
+                  key={n}
+                  onClick={() => setRepsNum(n)}
+                  className="rounded-xl font-bold text-sm"
+                  style={{
+                    height: 40,
+                    background: repsNum === n ? muscleColor : "var(--background)",
+                    color: repsNum === n ? "var(--background)" : "var(--muted)",
+                    border: `0.5px solid ${repsNum === n ? muscleColor : "var(--border)"}`,
+                    cursor: "pointer",
+                    transition: "all 0.12s ease",
+                  }}
+                >
+                  {n}
+                </button>
+              ))}
+            </div>
+          </div>
+
+          {/* ── RIR ── */}
+          <div className="mb-4">
+            <div className="text-xs font-bold mb-2" style={{ color: "var(--faint)", letterSpacing: "0.1em", textTransform: "uppercase" }}>RIR</div>
+            <div className="flex gap-1.5">
+              {[
+                { label: "Máx", value: 0 },
+                { label: "1", value: 1 },
+                { label: "2", value: 2 },
+                { label: "3", value: 3 },
+                { label: "4+", value: 4 },
+              ].map(({ label, value }) => (
+                <button
+                  key={value}
+                  onClick={() => setRirNum(rirNum === value ? null : value)}
+                  className="flex-1 rounded-xl font-bold text-xs"
+                  style={{
+                    height: 44,
+                    background: rirNum === value ? "var(--accent)" : "var(--background)",
+                    color: rirNum === value ? "var(--background)" : "var(--muted)",
+                    border: `0.5px solid ${rirNum === value ? "var(--accent)" : "var(--border)"}`,
+                    cursor: "pointer",
+                    transition: "all 0.12s ease",
+                  }}
+                >
+                  {label}
+                </button>
+              ))}
+            </div>
+          </div>
+
+          {/* Toggles + notas */}
+          <div className="flex gap-2 items-center mb-3">
             <label className="flex items-center gap-1.5 text-xs cursor-pointer" style={{ color: "var(--muted)" }}>
-              <input
-                type="checkbox"
-                checked={isWarmup}
-                onChange={(e) => setIsWarmup(e.target.checked)}
-                style={{ accentColor: "var(--accent)" }}
-              />
+              <input type="checkbox" checked={isWarmup} onChange={(e) => setIsWarmup(e.target.checked)} style={{ accentColor: "var(--accent)" }} />
               Aquec.
             </label>
             <button
               onClick={() => setIsFailure((v) => !v)}
               style={{
-                fontSize: 11, fontWeight: 600, padding: "3px 10px",
+                fontSize: 11, fontWeight: 600, padding: "4px 12px",
                 borderRadius: 8, cursor: "pointer", minHeight: "auto",
                 background: isFailure ? "rgba(239,68,68,0.12)" : "transparent",
                 border: `0.5px solid ${isFailure ? "rgba(239,68,68,0.4)" : "var(--border)"}`,
@@ -1112,8 +1209,13 @@ function ExerciseCard({
                 transition: "all 0.15s",
               }}
             >
-              ✕ Falha
+              Falha
             </button>
+            <div className="flex items-center gap-1.5 ml-auto" onClick={(e) => e.stopPropagation()}>
+              <button onClick={() => adjustRest(-30)} style={{ color: "var(--faint)", fontSize: 10, minHeight: "auto", padding: "3px 7px", border: "0.5px solid var(--border)", borderRadius: 6, cursor: "pointer" }}>−30s</button>
+              <span className="text-xs font-bold tabular" style={{ color: "var(--muted)" }}>{fmtTimer(localRest)}</span>
+              <button onClick={() => adjustRest(30)} style={{ color: "var(--faint)", fontSize: 10, minHeight: "auto", padding: "3px 7px", border: "0.5px solid var(--border)", borderRadius: 6, cursor: "pointer" }}>+30s</button>
+            </div>
           </div>
 
           <textarea
@@ -1121,39 +1223,39 @@ function ExerciseCard({
             onChange={(e) => handleNotesChange(e.target.value)}
             placeholder="Notas do exercício..."
             rows={1}
-            className="w-full rounded-md px-3 py-2 text-xs resize-none mb-2"
-            style={{
-              background: "var(--background)",
-              border: "0.5px solid var(--border)",
-              color: "var(--muted)",
-              outline: "none",
-            }}
+            className="w-full rounded-xl px-3 py-2.5 text-xs resize-none mb-3"
+            style={{ background: "var(--background)", border: "0.5px solid var(--border)", color: "var(--muted)", outline: "none" }}
           />
 
-          {/* Calculadora de anilhas inline */}
-          {(() => {
-            const w = parseFloat(weight);
-            if (!w || w <= 20) return null;
-            const hint = calcPlates(w);
-            if (!hint) return null;
-            return (
-              <div className="text-xs mb-2 tabular" style={{ color: "var(--faint)" }}>
-                Barra 20 + {hint} / lado
-              </div>
-            );
-          })()}
-
-          {/* Descanso por exercício */}
-          <div className="flex items-center gap-2 mb-2" onClick={(e) => e.stopPropagation()}>
-            <span className="text-xs" style={{ color: "var(--faint)" }}>Descanso:</span>
-            <button onClick={() => adjustRest(-30)} style={{ color: "var(--faint)", fontSize: 11, minHeight: "auto", padding: "2px 6px", border: "0.5px solid var(--border)", borderRadius: 6 }}>−30s</button>
-            <span className="text-xs font-bold tabular" style={{ color: "var(--muted)" }}>{fmtTimer(localRest)}</span>
-            <button onClick={() => adjustRest(30)} style={{ color: "var(--faint)", fontSize: 11, minHeight: "auto", padding: "2px 6px", border: "0.5px solid var(--border)", borderRadius: 6 }}>+30s</button>
-          </div>
-
-          <Button onClick={handleSave} disabled={saving} fullWidth size="sm">
-            {saving ? "Salvando..." : isWarmup ? "Salvar aquecimento" : "Salvar série"}
-          </Button>
+          {/* ── BOTÃO SALVAR ── */}
+          <button
+            onClick={handleSave}
+            disabled={saving || weightNum <= 0 || repsNum <= 0}
+            className="w-full rounded-xl flex items-center justify-center gap-2 font-bold"
+            style={{
+              height: 56,
+              background: (saving || weightNum <= 0 || repsNum <= 0) ? "var(--surface-strong)" : "var(--accent)",
+              color: (saving || weightNum <= 0 || repsNum <= 0) ? "var(--muted)" : "var(--background)",
+              letterSpacing: "0.06em",
+              textTransform: "uppercase",
+              fontSize: 14,
+              cursor: (saving || weightNum <= 0 || repsNum <= 0) ? "not-allowed" : "pointer",
+              transition: "all 0.15s ease",
+            }}
+          >
+            {saving ? (
+              <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round" style={{ animation: "spin 1s linear infinite" }}>
+                <path d="M21 12a9 9 0 1 1-6.219-8.56"/>
+              </svg>
+            ) : (
+              <>
+                <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
+                  <polyline points="20 6 9 17 4 12"/>
+                </svg>
+                {isWarmup ? "Aquecimento" : "Salvar Série"}
+              </>
+            )}
+          </button>
         </div>
       )}
     </div>
