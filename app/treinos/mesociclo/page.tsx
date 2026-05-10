@@ -94,7 +94,7 @@ export default function MesocicloPage() {
     return (
       <div className="fade-in">
         <Link href="/treinos" className="text-xs font-medium block mb-3" style={{ color: "var(--muted)", minHeight: "auto" }}>
-          ← Treinos
+          ← Fichas
         </Link>
         <PageHeader eyebrow="Mesociclo" title="Sem bloco ativo" />
         <Link href="/treinos/mesociclo/novo">
@@ -154,7 +154,7 @@ export default function MesocicloPage() {
   return (
     <div className="fade-in">
       <Link href="/treinos" className="text-xs font-medium block mb-3" style={{ color: "var(--muted)", minHeight: "auto" }}>
-        ← Treinos
+        ← Fichas
       </Link>
       <div className="mb-1">
         <Eyebrow>Mesociclo ativo</Eyebrow>

@@ -5,6 +5,7 @@ import Link from "next/link";
 import { supabase } from "@/lib/supabase";
 import { Card, Eyebrow, PageHeader } from "@/components/ui";
 import { Spinner } from "@/components/Button";
+import { useConfirm } from "@/components/Toast";
 import { fmtDuration } from "@/lib/utils";
 import type { WorkoutSession } from "@/lib/database.types";
 
@@ -20,6 +21,21 @@ interface MonthGroup {
 export default function HistoricoPage() {
   const [loading, setLoading] = useState(true);
   const [groups, setGroups] = useState<MonthGroup[]>([]);
+  const confirm = useConfirm();
+
+  async function deleteSession(id: string) {
+    const ok = await confirm({
+      title: "Apagar treino?",
+      message: "Todas as séries registradas serão removidas permanentemente.",
+      confirmLabel: "Apagar",
+      danger: true,
+    });
+    if (!ok) return;
+    await supabase.from("session_sets").delete().eq("session_id", id);
+    await supabase.from("session_exercises").delete().eq("session_id", id);
+    await supabase.from("workout_sessions").delete().eq("id", id);
+    load();
+  }
 
   useEffect(() => {
     load();
@@ -56,7 +72,7 @@ export default function HistoricoPage() {
   return (
     <div className="fade-in">
       <Link href="/sessao" className="text-xs font-medium block mb-3" style={{ color: "var(--muted)", minHeight: "auto" }}>
-        ← Sessão
+        ← Treinos
       </Link>
       <PageHeader
         eyebrow="Histórico"
@@ -83,35 +99,48 @@ export default function HistoricoPage() {
                 const weekday = date.toLocaleDateString("pt-BR", { weekday: "short" });
                 const day = date.getDate();
                 return (
-                  <Link key={s.id} href={`/sessao/${s.id}/resumo`}>
+                  <div
+                    key={s.id}
+                    className="flex items-center gap-3 px-4"
+                    style={{ borderBottom: idx < group.sessions.length - 1 ? "0.5px solid var(--border)" : "none", paddingTop: 10, paddingBottom: 10 }}
+                  >
+                    {/* Data */}
                     <div
-                      className="flex items-center gap-3 px-4 py-3"
-                      style={{ borderBottom: idx < group.sessions.length - 1 ? "0.5px solid var(--border)" : "none" }}
+                      className="flex-shrink-0 flex flex-col items-center justify-center rounded-lg"
+                      style={{ width: "40px", height: "44px", background: "var(--surface-strong)" }}
                     >
-                      {/* Data */}
-                      <div
-                        className="flex-shrink-0 flex flex-col items-center justify-center rounded-lg"
-                        style={{ width: "40px", height: "44px", background: "var(--surface-strong)" }}
-                      >
-                        <div className="text-xs font-medium capitalize" style={{ color: "var(--muted)" }}>{weekday}</div>
-                        <div className="text-lg font-bold tabular leading-none">{day}</div>
-                      </div>
-
-                      {/* Info */}
-                      <div className="flex-1 min-w-0">
-                        <div className="font-medium text-sm truncate">
-                          {s.day_name ?? "Treino livre"}
-                        </div>
-                        <div className="text-xs mt-0.5" style={{ color: "var(--muted)" }}>
-                          {s.duration_minutes ? fmtDuration(s.duration_minutes) : "—"}
-                          {s.energy_level ? ` · energia ${s.energy_level}/5` : ""}
-                        </div>
-                      </div>
-
-                      {/* Seta */}
-                      <div className="text-xs flex-shrink-0" style={{ color: "var(--accent)" }}>→</div>
+                      <div className="text-xs font-medium capitalize" style={{ color: "var(--muted)" }}>{weekday}</div>
+                      <div className="text-lg font-bold tabular leading-none">{day}</div>
                     </div>
-                  </Link>
+
+                    {/* Info — clicável para resumo */}
+                    <Link href={`/sessao/${s.id}/resumo`} className="flex-1 min-w-0">
+                      <div className="font-medium text-sm truncate">
+                        {s.day_name ?? "Treino livre"}
+                      </div>
+                      <div className="text-xs mt-0.5" style={{ color: "var(--muted)" }}>
+                        {s.duration_minutes ? fmtDuration(s.duration_minutes) : "—"}
+                        {s.energy_level ? ` · energia ${s.energy_level}/5` : ""}
+                      </div>
+                    </Link>
+
+                    {/* Ações */}
+                    <div className="flex items-center gap-2 flex-shrink-0">
+                      <Link
+                        href={`/sessao/${s.id}/resumo`}
+                        className="text-xs"
+                        style={{ color: "var(--accent)", minHeight: "auto" }}
+                      >
+                        →
+                      </Link>
+                      <button
+                        onClick={() => deleteSession(s.id)}
+                        style={{ color: "var(--faint)", fontSize: 16, minHeight: "auto", lineHeight: 1, padding: "2px 4px" }}
+                      >
+                        ×
+                      </button>
+                    </div>
+                  </div>
                 );
               })}
             </Card>

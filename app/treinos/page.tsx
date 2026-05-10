@@ -48,7 +48,7 @@ export default function TreinosPage() {
 
   return (
     <div className="fade-in">
-      <PageHeader eyebrow="Planejamento" title="Treinos" />
+      <PageHeader eyebrow="Planejamento" title="Fichas" />
 
       {/* Mesociclo ativo */}
       <Eyebrow className="mb-2">Mesociclo ativo</Eyebrow>

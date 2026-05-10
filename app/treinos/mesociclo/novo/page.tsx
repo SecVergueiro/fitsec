@@ -68,7 +68,7 @@ export default function NovoMesociclo() {
   return (
     <div className="fade-in">
       <Link href="/treinos" className="text-xs font-medium block mb-3" style={{ color: "var(--muted)", minHeight: "auto" }}>
-        ← Treinos
+        ← Fichas
       </Link>
       <PageHeader eyebrow="Novo bloco" title="Iniciar mesociclo" />
 

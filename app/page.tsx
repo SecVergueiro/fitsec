@@ -9,8 +9,18 @@ import type { Mesocycle, Template, TemplateDay, WorkoutSession } from "@/lib/dat
 
 const WEEKDAYS = ["D", "S", "T", "Q", "Q", "S", "S"];
 
+function getGreeting(): string {
+  const h = new Date().getHours();
+  if (h < 12) return "Bom dia";
+  if (h < 18) return "Boa tarde";
+  return "Boa noite";
+}
+
 export default function HomePage() {
   const [loading, setLoading] = useState(true);
+  const [userName, setUserName] = useState("");
+  const [editingName, setEditingName] = useState(false);
+  const [nameInput, setNameInput] = useState("");
   const [activeMeso, setActiveMeso] = useState<Mesocycle | null>(null);
   const [activeTemplate, setActiveTemplate] = useState<Template | null>(null);
   const [todayDay, setTodayDay] = useState<TemplateDay | null>(null);
@@ -23,7 +33,17 @@ export default function HomePage() {
 
   useEffect(() => {
     loadDashboard();
+    const saved = localStorage.getItem("user_name") ?? "";
+    setUserName(saved);
+    setNameInput(saved);
   }, []);
+
+  function saveName() {
+    const n = nameInput.trim();
+    setUserName(n);
+    localStorage.setItem("user_name", n);
+    setEditingName(false);
+  }
 
   async function loadDashboard() {
     setLoading(true);
@@ -147,12 +167,38 @@ export default function HomePage() {
   return (
     <div className="fade-in">
       <Eyebrow>{dateStr}</Eyebrow>
-      <h1
-        className="text-4xl mt-1 mb-5"
-        style={{ fontFamily: "'Barlow Condensed', sans-serif", fontWeight: 800, letterSpacing: "0.01em" }}
-      >
-        Boa, Sec.
-      </h1>
+      <div className="flex items-baseline gap-2 mt-1 mb-5">
+        <h1
+          className="text-4xl"
+          style={{ fontFamily: "'Barlow Condensed', sans-serif", fontWeight: 800, letterSpacing: "0.01em" }}
+        >
+          {getGreeting()}{userName ? `, ${userName}.` : "."}
+        </h1>
+        {!editingName && (
+          <button
+            onClick={() => { setNameInput(userName); setEditingName(true); }}
+            style={{ color: "var(--faint)", fontSize: 13, minHeight: "auto", paddingBottom: 2 }}
+          >
+            ✎
+          </button>
+        )}
+      </div>
+      {editingName && (
+        <div className="flex gap-2 mb-4 -mt-3">
+          <input
+            autoFocus
+            value={nameInput}
+            onChange={(e) => setNameInput(e.target.value)}
+            onKeyDown={(e) => { if (e.key === "Enter") saveName(); if (e.key === "Escape") setEditingName(false); }}
+            placeholder="Seu nome..."
+            className="flex-1 rounded-lg px-3 py-2 text-sm font-bold"
+            style={{ background: "var(--surface)", border: "0.5px solid var(--border-strong)", color: "var(--text)", outline: "none" }}
+          />
+          <button onClick={saveName} className="px-3 py-2 rounded-lg text-sm font-bold" style={{ background: "var(--primary)", color: "var(--background)", minHeight: "auto" }}>
+            OK
+          </button>
+        </div>
+      )}
 
       {/* Sessão em andamento — aparece se há treino ativo */}
       {!loading && activeSession && (

@@ -135,7 +135,7 @@ export default function TemplateDetailPage() {
           className="text-xs font-medium block mb-4"
           style={{ color: "var(--muted)", minHeight: "auto" }}
         >
-          ← Treinos
+          ← Fichas
         </Link>
         <EmptyState
           title="Template não encontrado"
@@ -155,7 +155,7 @@ export default function TemplateDetailPage() {
   return (
     <div className="fade-in">
       <Link href="/treinos" className="text-xs font-medium block mb-3" style={{ color: "var(--muted)", minHeight: "auto" }}>
-        ← Treinos
+        ← Fichas
       </Link>
       <div className="flex justify-between items-start mb-5">
         <div>

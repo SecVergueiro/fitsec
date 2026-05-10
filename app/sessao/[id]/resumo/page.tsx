@@ -2,10 +2,11 @@
 
 import { useEffect, useState } from "react";
 import Link from "next/link";
-import { useParams } from "next/navigation";
+import { useParams, useRouter } from "next/navigation";
 import { supabase } from "@/lib/supabase";
 import { Card, Eyebrow, Pill } from "@/components/ui";
 import { Button, Spinner } from "@/components/Button";
+import { useConfirm } from "@/components/Toast";
 import { estimate1RM, fmtDuration, fmtKg, fmtTonnage } from "@/lib/utils";
 import type { Exercise, SessionSet, WorkoutSession } from "@/lib/database.types";
 
@@ -21,11 +22,28 @@ interface ExSummary {
 
 export default function ResumoPage() {
   const params = useParams();
+  const router = useRouter();
   const sessionId = params.id as string;
+  const confirm = useConfirm();
 
   const [session, setSession] = useState<WorkoutSession | null>(null);
   const [summary, setSummary] = useState<ExSummary[]>([]);
   const [loading, setLoading] = useState(true);
+  const [showEditModal, setShowEditModal] = useState(false);
+
+  async function handleDelete() {
+    const ok = await confirm({
+      title: "Apagar treino?",
+      message: "Todas as séries serão removidas permanentemente.",
+      confirmLabel: "Apagar",
+      danger: true,
+    });
+    if (!ok) return;
+    await supabase.from("session_sets").delete().eq("session_id", sessionId);
+    await supabase.from("session_exercises").delete().eq("session_id", sessionId);
+    await supabase.from("workout_sessions").delete().eq("id", sessionId);
+    router.push("/historico");
+  }
 
   useEffect(() => {
     load();
@@ -308,11 +326,138 @@ export default function ResumoPage() {
             Início
           </Button>
         </Link>
-        <Link href={`/sessao/${sessionId}`} className="flex-1">
-          <Button variant="secondary" fullWidth>
-            Ver detalhes
-          </Button>
-        </Link>
+        <button
+          onClick={() => setShowEditModal(true)}
+          className="flex-1 rounded-lg font-bold text-sm"
+          style={{ background: "var(--surface-strong)", color: "var(--primary)", border: "0.5px solid var(--border-strong)", minHeight: "44px" }}
+        >
+          Editar
+        </button>
+      </div>
+
+      <button onClick={handleDelete} className="text-xs mt-5 block mx-auto" style={{ color: "#ff8888", minHeight: "auto" }}>
+        Apagar treino
+      </button>
+
+      {showEditModal && session && (
+        <EditSessionModal
+          session={session}
+          onClose={() => setShowEditModal(false)}
+          onSaved={(updated) => {
+            setSession(updated);
+            setShowEditModal(false);
+          }}
+        />
+      )}
+    </div>
+  );
+}
+
+// ─── Modal de edição ────────────────────────────────────────────────────────
+
+const ENERGY_LABELS = ["", "Péssimo", "Ruim", "Ok", "Bom", "Ótimo"];
+const ENERGY_COLORS = ["", "#ef4444", "#f97316", "#eab308", "#22c55e", "#4493e0"];
+
+function EditSessionModal({
+  session,
+  onClose,
+  onSaved,
+}: {
+  session: WorkoutSession;
+  onClose: () => void;
+  onSaved: (updated: WorkoutSession) => void;
+}) {
+  const [energy, setEnergy] = useState<number | null>(session.energy_level ?? null);
+  const [notes, setNotes] = useState(session.notes ?? "");
+  const [bodyweight, setBodyweight] = useState(session.bodyweight_kg ? String(session.bodyweight_kg) : "");
+  const [saving, setSaving] = useState(false);
+
+  async function save() {
+    setSaving(true);
+    const bw = bodyweight ? parseFloat(bodyweight) : null;
+    const { data } = await supabase
+      .from("workout_sessions")
+      .update({
+        energy_level: energy,
+        notes: notes.trim() || null,
+        bodyweight_kg: bw && bw > 0 ? bw : null,
+      } as any)
+      .eq("id", session.id)
+      .select()
+      .single();
+    setSaving(false);
+    onSaved(data as WorkoutSession);
+  }
+
+  return (
+    <div
+      className="fixed inset-0 z-50 flex items-end justify-center"
+      style={{ background: "rgba(0,0,0,0.6)", backdropFilter: "blur(8px)" }}
+      onClick={(e) => { if (e.target === e.currentTarget) onClose(); }}
+    >
+      <div
+        className="w-full max-w-md rounded-t-2xl p-5 fade-in"
+        style={{ background: "var(--background)", border: "0.5px solid var(--border-strong)", paddingBottom: "calc(1.25rem + env(safe-area-inset-bottom))" }}
+      >
+        <div className="flex justify-between items-center mb-4">
+          <h2 className="text-base font-bold">Editar treino</h2>
+          <button onClick={onClose} style={{ color: "var(--muted)", minHeight: "auto" }}>✕</button>
+        </div>
+
+        {/* Peso corporal */}
+        <label className="block text-xs font-bold mb-1" style={{ color: "var(--muted)", letterSpacing: "0.08em", textTransform: "uppercase" }}>
+          Peso corporal (kg)
+        </label>
+        <input
+          type="number"
+          inputMode="decimal"
+          value={bodyweight}
+          onChange={(e) => setBodyweight(e.target.value)}
+          placeholder="Ex: 80.5"
+          step="0.1"
+          className="w-full rounded-lg px-3 py-2.5 text-sm mb-4 text-center font-bold"
+          style={{ background: "var(--surface)", border: "0.5px solid var(--border)", color: "var(--text)", outline: "none" }}
+        />
+
+        {/* Energia */}
+        <label className="block text-xs font-bold mb-2" style={{ color: "var(--muted)", letterSpacing: "0.08em", textTransform: "uppercase" }}>
+          Energia
+        </label>
+        <div className="flex gap-2 mb-4">
+          {[1, 2, 3, 4, 5].map((i) => (
+            <button
+              key={i}
+              onClick={() => setEnergy(energy === i ? null : i)}
+              className="flex-1 py-2 rounded-xl text-xs font-bold flex flex-col items-center gap-0.5"
+              style={{
+                minHeight: "auto",
+                background: energy === i ? `${ENERGY_COLORS[i]}20` : "var(--surface)",
+                border: `0.5px solid ${energy === i ? ENERGY_COLORS[i] : "var(--border)"}`,
+                color: energy === i ? ENERGY_COLORS[i] : "var(--muted)",
+              }}
+            >
+              <span style={{ fontSize: 16 }}>{i}</span>
+              <span style={{ fontSize: 9 }}>{ENERGY_LABELS[i]}</span>
+            </button>
+          ))}
+        </div>
+
+        {/* Notas */}
+        <label className="block text-xs font-bold mb-1" style={{ color: "var(--muted)", letterSpacing: "0.08em", textTransform: "uppercase" }}>
+          Notas
+        </label>
+        <textarea
+          value={notes}
+          onChange={(e) => setNotes(e.target.value)}
+          rows={3}
+          placeholder="Como foi o treino?"
+          className="w-full rounded-lg px-3 py-2.5 text-sm mb-4 resize-none"
+          style={{ background: "var(--surface)", border: "0.5px solid var(--border)", color: "var(--text)", outline: "none" }}
+        />
+
+        <Button fullWidth onClick={save} disabled={saving}>
+          {saving ? "Salvando..." : "Salvar"}
+        </Button>
       </div>
     </div>
   );
