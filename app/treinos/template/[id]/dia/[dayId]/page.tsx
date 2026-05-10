@@ -47,6 +47,30 @@ export default function DiaDetailPage() {
     setLoading(false);
   }
 
+  async function moveExercise(id: string, direction: "up" | "down") {
+    const idx = exercises.findIndex((e) => e.id === id);
+    if (idx < 0) return;
+    const swapIdx = direction === "up" ? idx - 1 : idx + 1;
+    if (swapIdx < 0 || swapIdx >= exercises.length) return;
+
+    const a = exercises[idx];
+    const b = exercises[swapIdx];
+    const orderA = a.exercise_order;
+    const orderB = b.exercise_order;
+
+    // Optimistic UI update
+    const newList = [...exercises];
+    newList[idx] = { ...a, exercise_order: orderB };
+    newList[swapIdx] = { ...b, exercise_order: orderA };
+    newList.sort((x, y) => x.exercise_order - y.exercise_order);
+    setExercises(newList);
+
+    await Promise.all([
+      supabase.from("template_exercises").update({ exercise_order: orderB } as any).eq("id", a.id),
+      supabase.from("template_exercises").update({ exercise_order: orderA } as any).eq("id", b.id),
+    ]);
+  }
+
   async function deleteExercise(id: string) {
     const ok = await confirm({
       title: "Remover exercício?",
@@ -153,6 +177,22 @@ export default function DiaDetailPage() {
                   </div>
                 </div>
                 <div className="flex flex-col gap-1">
+                  <div className="flex gap-1 justify-end mb-1">
+                    <button
+                      onClick={() => moveExercise(ex.id, "up")}
+                      disabled={idx === 0}
+                      style={{ color: idx === 0 ? "var(--faint)" : "var(--muted)", minHeight: "auto", padding: "2px 6px", fontSize: "13px" }}
+                    >
+                      ↑
+                    </button>
+                    <button
+                      onClick={() => moveExercise(ex.id, "down")}
+                      disabled={idx === exercises.length - 1}
+                      style={{ color: idx === exercises.length - 1 ? "var(--faint)" : "var(--muted)", minHeight: "auto", padding: "2px 6px", fontSize: "13px" }}
+                    >
+                      ↓
+                    </button>
+                  </div>
                   <button
                     onClick={() => setEditing(ex)}
                     className="text-xs"

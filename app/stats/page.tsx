@@ -9,6 +9,8 @@ import type { Exercise, PersonalRecord } from "@/lib/database.types";
 import {
   BarChart,
   Bar,
+  LineChart,
+  Line,
   XAxis,
   YAxis,
   Tooltip,
@@ -49,6 +51,7 @@ export default function StatsPage() {
   const [totalVolume, setTotalVolume] = useState(0);
   const [muscleVolumes, setMuscleVolumes] = useState<MuscleVolume[]>([]);
   const [weeklyTrend, setWeeklyTrend] = useState<WeekBucket[]>([]);
+  const [bodyweightData, setBodyweightData] = useState<{ date: string; kg: number }[]>([]);
   const [search, setSearch] = useState("");
 
   useEffect(() => {
@@ -65,7 +68,7 @@ export default function StatsPage() {
   async function load() {
     setLoading(true);
 
-    const [setsRes, exRes, mesoRes] = await Promise.all([
+    const [setsRes, exRes, mesoRes, bwRes] = await Promise.all([
       supabase
         .from("session_sets")
         .select("exercise_id, weight_kg, reps, performed_at, is_warmup"),
@@ -76,6 +79,13 @@ export default function StatsPage() {
         .eq("is_active", true)
         .limit(1)
         .maybeSingle(),
+      supabase
+        .from("workout_sessions")
+        .select("session_date, bodyweight_kg")
+        .not("bodyweight_kg", "is", null)
+        .not("completed_at", "is", null)
+        .order("session_date", { ascending: true })
+        .limit(60),
     ]);
 
     const allSets = (setsRes.data as any[]) ?? [];
@@ -84,6 +94,12 @@ export default function StatsPage() {
     setRawSets(allSets);
     setRawExercises(allExercises);
     if (mesoRes.data) setActiveMesoStart((mesoRes.data as any).start_date);
+
+    const bwPoints = ((bwRes.data as any[]) ?? []).map((s) => ({
+      date: new Date(s.session_date + "T12:00:00").toLocaleDateString("pt-BR", { day: "2-digit", month: "2-digit" }),
+      kg: s.bodyweight_kg,
+    }));
+    setBodyweightData(bwPoints);
 
     setLoading(false);
   }
@@ -313,6 +329,65 @@ export default function StatsPage() {
                     />
                   </BarChart>
                 </ResponsiveContainer>
+              </Card>
+            </>
+          )}
+
+          {/* Peso corporal */}
+          {bodyweightData.length >= 2 && (
+            <>
+              <Eyebrow className="mb-2">Peso corporal · {bodyweightData.length} registros</Eyebrow>
+              <Card className="!p-3 mb-5">
+                <ResponsiveContainer width="100%" height={130}>
+                  <LineChart
+                    data={bodyweightData}
+                    margin={{ top: 8, right: 5, left: -22, bottom: 0 }}
+                  >
+                    <CartesianGrid
+                      stroke="rgba(237, 238, 239, 0.05)"
+                      strokeDasharray="2 3"
+                      vertical={false}
+                    />
+                    <XAxis
+                      dataKey="date"
+                      tick={{ fill: "rgba(237, 238, 239, 0.35)", fontSize: 9 }}
+                      tickLine={false}
+                      axisLine={{ stroke: "rgba(237, 238, 239, 0.1)" }}
+                      interval={Math.max(0, Math.floor(bodyweightData.length / 5) - 1)}
+                    />
+                    <YAxis
+                      tick={{ fill: "rgba(237, 238, 239, 0.35)", fontSize: 9 }}
+                      tickLine={false}
+                      axisLine={false}
+                      tickFormatter={(v) => `${v}`}
+                      domain={["auto", "auto"]}
+                    />
+                    <Tooltip
+                      contentStyle={{
+                        background: "var(--background)",
+                        border: "0.5px solid var(--border-strong)",
+                        borderRadius: "8px",
+                        fontSize: "12px",
+                      }}
+                      labelStyle={{ color: "var(--muted)" }}
+                      formatter={(v: any) => [`${v} kg`, "peso"]}
+                      cursor={{ stroke: "rgba(237,238,239,0.15)" }}
+                    />
+                    <Line
+                      type="monotone"
+                      dataKey="kg"
+                      stroke="var(--accent)"
+                      strokeWidth={2}
+                      dot={false}
+                      activeDot={{ r: 4, fill: "var(--accent)" }}
+                    />
+                  </LineChart>
+                </ResponsiveContainer>
+                <div className="flex justify-between text-xs mt-2" style={{ color: "var(--muted)" }}>
+                  <span>Mín: {Math.min(...bodyweightData.map((d) => d.kg))} kg</span>
+                  <span>Máx: {Math.max(...bodyweightData.map((d) => d.kg))} kg</span>
+                  <span>Último: {bodyweightData[bodyweightData.length - 1].kg} kg</span>
+                </div>
               </Card>
             </>
           )}

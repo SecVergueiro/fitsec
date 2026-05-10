@@ -358,6 +358,26 @@ export default function HomePage() {
             </div>
           </Card>
         </Link>
+        <Link href="/historico">
+          <Card className="!p-3 text-center">
+            <div className="text-sm font-bold" style={{ color: "var(--primary)" }}>
+              Histórico →
+            </div>
+            <div className="text-xs mt-0.5" style={{ color: "var(--muted)" }}>
+              todos os treinos
+            </div>
+          </Card>
+        </Link>
+        <Link href="/stats">
+          <Card className="!p-3 text-center">
+            <div className="text-sm font-bold" style={{ color: "var(--primary)" }}>
+              Stats →
+            </div>
+            <div className="text-xs mt-0.5" style={{ color: "var(--muted)" }}>
+              progressão e PRs
+            </div>
+          </Card>
+        </Link>
       </div>
     </div>
   );

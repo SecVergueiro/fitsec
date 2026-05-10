@@ -173,7 +173,11 @@ export default function SessaoAtivaPage() {
       if (new1RM > overallBest) {
         toast.pr(`Novo PR — ${fmtKg(new1RM)} e1RM`);
         if ("vibrate" in navigator) navigator.vibrate([100, 50, 200, 50, 300]);
+      } else {
+        toast.success("Série salva");
       }
+    } else {
+      toast.success("Aquecimento salvo");
     }
 
     setExercises((prev) => {
