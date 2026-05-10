@@ -577,6 +577,40 @@ function ExerciseCard({
   const [showTips, setShowTips] = useState(false);
   const notesTimerRef = useRef<NodeJS.Timeout | null>(null);
 
+  // Prescrição editável localmente
+  const [editingPrescription, setEditingPrescription] = useState(false);
+  const [localSets, setLocalSets] = useState(exercise.prescribed_sets ?? 3);
+  const [localRepMin, setLocalRepMin] = useState(exercise.rep_range_min ?? 8);
+  const [localRepMax, setLocalRepMax] = useState(exercise.rep_range_max ?? 12);
+  const [localRIR, setLocalRIR] = useState(exercise.target_rir ?? 2);
+  const [localRest, setLocalRest] = useState(exercise.rest_seconds ?? 90);
+
+  async function savePrescription() {
+    await supabase.from("session_exercises").update({
+      prescribed_sets: localSets,
+      rep_range_min: localRepMin,
+      rep_range_max: localRepMax,
+      target_rir: localRIR,
+      rest_seconds: localRest,
+    } as any).eq("id", exercise.id);
+    setEditingPrescription(false);
+  }
+
+  // Sugestão de carga baseada na sessão anterior
+  const loadSuggestion = (() => {
+    const prev = exercise.prevSession;
+    if (!prev || prev.sets.length === 0) return null;
+    const withRIR = prev.sets.filter((s) => s.rir != null);
+    const avgRIR = withRIR.length > 0
+      ? withRIR.reduce((sum, s) => sum + s.rir!, 0) / withRIR.length
+      : null;
+    const base = prev.maxWeight;
+    if (avgRIR === null) return null;
+    if (avgRIR >= 2) return { kg: base + 2.5, tip: `RIR médio ${avgRIR.toFixed(1)} → progredir` };
+    if (avgRIR >= 1) return { kg: base + 1.25, tip: `RIR médio ${avgRIR.toFixed(1)} → progressão leve` };
+    return { kg: base, tip: `RIR médio ${avgRIR.toFixed(1)} → manter carga` };
+  })();
+
   useEffect(() => {
     const lastSet = [...exercise.sets].reverse().find((s) => !s.is_warmup);
     if (lastSet && !weight) {
@@ -673,17 +707,75 @@ function ExerciseCard({
               {exercise.exercise.notes}
             </div>
           )}
-          <div className="flex gap-1 flex-wrap mt-1.5">
-            {exercise.prescribed_sets && (
-              <Pill variant="soft">
-                {exercise.prescribed_sets} × {exercise.rep_range_min}-{exercise.rep_range_max}
+          {editingPrescription ? (
+            <div className="mt-2 space-y-2" onClick={(e) => e.stopPropagation()}>
+              <div className="grid grid-cols-3 gap-1.5">
+                {[
+                  { label: "Séries", val: localSets, set: setLocalSets },
+                  { label: "Rep min", val: localRepMin, set: setLocalRepMin },
+                  { label: "Rep max", val: localRepMax, set: setLocalRepMax },
+                ].map(({ label, val, set }) => (
+                  <div key={label}>
+                    <div className="text-xs mb-0.5" style={{ color: "var(--faint)" }}>{label}</div>
+                    <input
+                      type="number"
+                      inputMode="numeric"
+                      value={val}
+                      onChange={(e) => set(Number(e.target.value))}
+                      className="w-full text-center text-xs font-bold rounded py-1.5"
+                      style={{ background: "var(--background)", border: "0.5px solid var(--border-strong)", color: "var(--text)", outline: "none", minHeight: "auto" }}
+                    />
+                  </div>
+                ))}
+              </div>
+              <div className="grid grid-cols-2 gap-1.5">
+                {[
+                  { label: "RIR alvo", val: localRIR, set: setLocalRIR },
+                  { label: "Descanso(s)", val: localRest, set: setLocalRest },
+                ].map(({ label, val, set }) => (
+                  <div key={label}>
+                    <div className="text-xs mb-0.5" style={{ color: "var(--faint)" }}>{label}</div>
+                    <input
+                      type="number"
+                      inputMode="numeric"
+                      value={val}
+                      onChange={(e) => set(Number(e.target.value))}
+                      className="w-full text-center text-xs font-bold rounded py-1.5"
+                      style={{ background: "var(--background)", border: "0.5px solid var(--border-strong)", color: "var(--text)", outline: "none", minHeight: "auto" }}
+                    />
+                  </div>
+                ))}
+              </div>
+              <div className="flex gap-2">
+                <button onClick={savePrescription} className="flex-1 py-1.5 rounded-lg text-xs font-bold" style={{ background: "var(--primary)", color: "var(--background)", minHeight: "auto" }}>
+                  Salvar
+                </button>
+                <button onClick={() => setEditingPrescription(false)} className="flex-1 py-1.5 rounded-lg text-xs font-medium" style={{ background: "transparent", border: "0.5px solid var(--border)", color: "var(--muted)", minHeight: "auto" }}>
+                  Cancelar
+                </button>
+              </div>
+            </div>
+          ) : (
+            <div className="flex gap-1 flex-wrap mt-1.5 items-center">
+              {localSets > 0 && (
+                <Pill variant="soft">
+                  {localSets} × {localRepMin}-{localRepMax}
+                </Pill>
+              )}
+              {localRIR != null && <Pill variant="soft">RIR {localRIR}</Pill>}
+              <Pill variant="ghost">
+                {realSets.length}/{localSets || "?"}
               </Pill>
-            )}
-            {exercise.target_rir != null && <Pill variant="soft">RIR {exercise.target_rir}</Pill>}
-            <Pill variant="ghost">
-              {realSets.length}/{exercise.prescribed_sets ?? "?"}
-            </Pill>
-          </div>
+              {!isReadOnly && isActive && (
+                <button
+                  onClick={(e) => { e.stopPropagation(); setEditingPrescription(true); }}
+                  style={{ color: "var(--faint)", fontSize: 11, minHeight: "auto", padding: "1px 4px" }}
+                >
+                  ✎
+                </button>
+              )}
+            </div>
+          )}
         </div>
         {!isReadOnly && (
           <button
@@ -777,6 +869,28 @@ function ExerciseCard({
               </span>
             ))}
           </div>
+        </div>
+      )}
+
+      {/* Sugestão de carga */}
+      {loadSuggestion && isActive && !isCompleted && !isReadOnly && (
+        <div
+          className="mt-2 pt-2 flex items-center justify-between"
+          style={{ borderTop: "0.5px solid var(--border)" }}
+        >
+          <div>
+            <span className="text-xs font-bold" style={{ color: "var(--faint)", letterSpacing: "0.08em", textTransform: "uppercase" }}>
+              Sugestão
+            </span>
+            <span className="text-xs ml-2" style={{ color: "var(--muted)" }}>{loadSuggestion.tip}</span>
+          </div>
+          <button
+            onClick={(e) => { e.stopPropagation(); setWeight(String(loadSuggestion.kg)); }}
+            className="text-xs font-bold tabular px-2.5 py-1 rounded-lg"
+            style={{ background: "rgba(68,147,224,0.1)", color: "var(--accent)", border: "0.5px solid rgba(68,147,224,0.25)", minHeight: "auto" }}
+          >
+            {fmtKg(loadSuggestion.kg)} kg →
+          </button>
         </div>
       )}
 

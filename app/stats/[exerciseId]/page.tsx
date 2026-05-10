@@ -20,6 +20,7 @@ import {
   ComposedChart,
   BarChart,
   Bar,
+  ReferenceLine,
 } from "recharts";
 
 interface SetWithE1RM extends SessionSet {
@@ -27,11 +28,14 @@ interface SetWithE1RM extends SessionSet {
   date: string;
 }
 
+const BLOCK_COLORS = ["#4493e0", "#22c55e", "#f97316", "#a855f7", "#ef4444", "#fbbf24"];
+
 export default function ExerciseStatsPage() {
   const params = useParams();
   const exerciseId = params.exerciseId as string;
   const [exercise, setExercise] = useState<Exercise | null>(null);
   const [sets, setSets] = useState<SetWithE1RM[]>([]);
+  const [mesocycles, setMesocycles] = useState<{ id: string; name: string; start_date: string; end_date: string | null }[]>([]);
   const [loading, setLoading] = useState(true);
 
   useEffect(() => {
@@ -40,7 +44,7 @@ export default function ExerciseStatsPage() {
 
   async function load() {
     setLoading(true);
-    const [exRes, setsRes] = await Promise.all([
+    const [exRes, setsRes, mesoRes] = await Promise.all([
       supabase.from("exercises").select("*").eq("id", exerciseId).single(),
       supabase
         .from("session_sets")
@@ -48,9 +52,11 @@ export default function ExerciseStatsPage() {
         .eq("exercise_id", exerciseId)
         .eq("is_warmup", false)
         .order("performed_at", { ascending: true }),
+      supabase.from("mesocycles").select("id, name, start_date, end_date").order("start_date"),
     ]);
 
     setExercise(exRes.data as Exercise);
+    setMesocycles((mesoRes.data as any[]) ?? []);
     const enriched: SetWithE1RM[] = (setsRes.data as SessionSet[]).map((s) => ({
       ...s,
       e1rm: estimate1RM(s.weight_kg, s.reps),
@@ -81,6 +87,11 @@ export default function ExerciseStatsPage() {
     .map((sessionSets) => {
       const best = sessionSets.reduce((acc, s) => (s.e1rm > acc.e1rm ? s : acc), sessionSets[0]);
       const totalVolume = sessionSets.reduce((sum, s) => sum + s.weight_kg * s.reps, 0);
+      const dateStr = best.performed_at.slice(0, 10);
+      const blockIdx = mesocycles.findIndex((m) => {
+        const end = m.end_date ?? "2099-12-31";
+        return dateStr >= m.start_date && dateStr <= end;
+      });
       return {
         date: best.date,
         e1rm: best.e1rm,
@@ -88,9 +99,20 @@ export default function ExerciseStatsPage() {
         reps: best.reps,
         volume: Math.round(totalVolume),
         performed_at: best.performed_at,
+        blockIdx,
+        blockName: blockIdx >= 0 ? mesocycles[blockIdx].name : null,
+        dotColor: blockIdx >= 0 ? BLOCK_COLORS[blockIdx % BLOCK_COLORS.length] : "#4493e0",
       };
     })
     .sort((a, b) => new Date(a.performed_at).getTime() - new Date(b.performed_at).getTime());
+
+  // Mesocycle reference lines: find dates in sessionData closest to each meso boundary
+  const mesoRefLines = mesocycles
+    .map((m, i) => {
+      const firstPoint = sessionData.find((s) => s.performed_at.slice(0, 10) >= m.start_date);
+      return firstPoint ? { date: firstPoint.date, label: `B${i + 1}`, color: BLOCK_COLORS[i % BLOCK_COLORS.length] } : null;
+    })
+    .filter(Boolean) as { date: string; label: string; color: string }[];
 
   const allTimeBest = sessionData.length > 0 ? Math.max(...sessionData.map((s) => s.e1rm)) : 0;
   const firstE1RM = sessionData[0]?.e1rm ?? 0;
@@ -150,11 +172,22 @@ export default function ExerciseStatsPage() {
             <>
               <Eyebrow className="mb-2">e1RM ao longo do tempo</Eyebrow>
               <Card className="!p-3 mb-5">
+                {/* Legenda de blocos */}
+                {mesocycles.length > 0 && (
+                  <div className="flex flex-wrap gap-x-3 gap-y-1 mb-3">
+                    {mesocycles.map((m, i) => (
+                      <div key={m.id} className="flex items-center gap-1.5">
+                        <div className="rounded-full" style={{ width: 8, height: 8, background: BLOCK_COLORS[i % BLOCK_COLORS.length], flexShrink: 0 }} />
+                        <span className="text-xs" style={{ color: "var(--muted)" }}>{m.name}</span>
+                      </div>
+                    ))}
+                  </div>
+                )}
                 <ResponsiveContainer width="100%" height={180}>
                   <ComposedChart data={sessionData} margin={{ top: 10, right: 5, left: -20, bottom: 0 }}>
                     <defs>
                       <linearGradient id="e1rmGrad" x1="0" y1="0" x2="0" y2="1">
-                        <stop offset="0%" stopColor="#4493e0" stopOpacity={0.4} />
+                        <stop offset="0%" stopColor="#4493e0" stopOpacity={0.3} />
                         <stop offset="100%" stopColor="#4493e0" stopOpacity={0} />
                       </linearGradient>
                     </defs>
@@ -179,15 +212,41 @@ export default function ExerciseStatsPage() {
                         fontSize: "12px",
                       }}
                       labelStyle={{ color: "var(--muted)" }}
-                      formatter={(v: any) => [`${v} kg`, "e1RM"]}
+                      formatter={(v: any, _name: any, props: any) => [
+                        `${v} kg e1RM`,
+                        props.payload?.blockName ?? "Sem bloco",
+                      ]}
                     />
+                    {mesoRefLines.map((rl) => (
+                      <ReferenceLine
+                        key={rl.label}
+                        x={rl.date}
+                        stroke={rl.color}
+                        strokeDasharray="3 3"
+                        strokeOpacity={0.5}
+                        label={{ value: rl.label, position: "insideTopRight", fill: rl.color, fontSize: 9 }}
+                      />
+                    ))}
                     <Area type="monotone" dataKey="e1rm" stroke="none" fill="url(#e1rmGrad)" />
                     <Line
                       type="monotone"
                       dataKey="e1rm"
                       stroke="#4493e0"
                       strokeWidth={2}
-                      dot={{ fill: "#4493e0", r: 3 }}
+                      dot={(props: any) => {
+                        const { cx, cy, payload } = props;
+                        return (
+                          <circle
+                            key={`dot-${payload.performed_at}`}
+                            cx={cx}
+                            cy={cy}
+                            r={4}
+                            fill={payload.dotColor ?? "#4493e0"}
+                            stroke="var(--background)"
+                            strokeWidth={1.5}
+                          />
+                        );
+                      }}
                       activeDot={{ r: 5 }}
                     />
                   </ComposedChart>

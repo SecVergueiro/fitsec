@@ -52,6 +52,9 @@ export default function StatsPage() {
   const [muscleVolumes, setMuscleVolumes] = useState<MuscleVolume[]>([]);
   const [weeklyTrend, setWeeklyTrend] = useState<WeekBucket[]>([]);
   const [bodyweightData, setBodyweightData] = useState<{ date: string; kg: number }[]>([]);
+  const [weeklyFrequency, setWeeklyFrequency] = useState<number | null>(null);
+  const [dayOfWeekVolume, setDayOfWeekVolume] = useState<{ day: string; sets: number; pct: number }[]>([]);
+  const [deloadAlert, setDeloadAlert] = useState(false);
   const [search, setSearch] = useState("");
 
   useEffect(() => {
@@ -68,7 +71,10 @@ export default function StatsPage() {
   async function load() {
     setLoading(true);
 
-    const [setsRes, exRes, mesoRes, bwRes] = await Promise.all([
+    const twelveWeeksAgo = new Date();
+    twelveWeeksAgo.setDate(twelveWeeksAgo.getDate() - 84);
+
+    const [setsRes, exRes, mesoRes, bwRes, sessRes] = await Promise.all([
       supabase
         .from("session_sets")
         .select("exercise_id, weight_kg, reps, performed_at, is_warmup"),
@@ -86,6 +92,11 @@ export default function StatsPage() {
         .not("completed_at", "is", null)
         .order("session_date", { ascending: true })
         .limit(60),
+      supabase
+        .from("workout_sessions")
+        .select("session_date")
+        .not("completed_at", "is", null)
+        .gte("session_date", twelveWeeksAgo.toISOString().slice(0, 10)),
     ]);
 
     const allSets = (setsRes.data as any[]) ?? [];
@@ -100,6 +111,20 @@ export default function StatsPage() {
       kg: s.bodyweight_kg,
     }));
     setBodyweightData(bwPoints);
+
+    // Frequência semanal média — últimas 12 semanas
+    const sessionDates = ((sessRes.data as any[]) ?? []).map((s) => s.session_date);
+    const sessionsByWeek: Record<string, number> = {};
+    sessionDates.forEach((d: string) => {
+      const date = new Date(d + "T12:00:00");
+      const dow = date.getDay();
+      const monday = new Date(date);
+      monday.setDate(date.getDate() - (dow === 0 ? 6 : dow - 1));
+      const key = monday.toISOString().slice(0, 10);
+      sessionsByWeek[key] = (sessionsByWeek[key] ?? 0) + 1;
+    });
+    const totalSessions = Object.values(sessionsByWeek).reduce((sum, n) => sum + n, 0);
+    setWeeklyFrequency(Math.round((totalSessions / 12) * 10) / 10);
 
     setLoading(false);
   }
@@ -211,6 +236,36 @@ export default function StatsPage() {
       });
     }
     setWeeklyTrend(trend);
+
+    // Volume por dia da semana
+    const DAY_LABELS = ["Dom", "Seg", "Ter", "Qua", "Qui", "Sex", "Sáb"];
+    const byDow: Record<number, number> = {};
+    allWorkingSets.forEach((s: any) => {
+      const dow = new Date(s.performed_at).getDay();
+      byDow[dow] = (byDow[dow] ?? 0) + 1;
+    });
+    const maxDowSets = Math.max(...Object.values(byDow), 1);
+    const dowData = [1, 2, 3, 4, 5, 6, 0].map((d) => ({
+      day: DAY_LABELS[d],
+      sets: byDow[d] ?? 0,
+      pct: ((byDow[d] ?? 0) / maxDowSets) * 100,
+    }));
+    setDayOfWeekVolume(dowData);
+
+    // Alerta de deload
+    const thisWeekVol = allWorkingSets
+      .filter((s: any) => s.performed_at.slice(0, 10) >= trend[trend.length - 1]?.startStr)
+      .reduce((sum: number, s: any) => sum + s.weight_kg * s.reps, 0);
+    const past4Vols = trend.slice(-5, -1).map((w) =>
+      allWorkingSets
+        .filter((s: any) => {
+          const d = s.performed_at.slice(0, 10);
+          return d >= w.startStr && d < trend[trend.findIndex((t) => t.startStr === w.startStr) + 1]?.startStr;
+        })
+        .reduce((sum: number, s: any) => sum + s.weight_kg * s.reps, 0)
+    );
+    const avg4 = past4Vols.reduce((sum, v) => sum + v, 0) / 4;
+    setDeloadAlert(avg4 > 500 && thisWeekVol < avg4 * 0.65 && now.getDay() >= 3);
   }
 
   const filtered = search.trim()
@@ -258,8 +313,24 @@ export default function StatsPage() {
         </Card>
       ) : (
         <>
+          {/* Alerta de deload */}
+          {deloadAlert && (
+            <div
+              className="rounded-xl px-4 py-3 mb-4 flex items-start gap-3"
+              style={{ background: "rgba(251,191,36,0.08)", border: "0.5px solid rgba(251,191,36,0.3)" }}
+            >
+              <span style={{ color: "#fbbf24", fontSize: 18, lineHeight: 1 }}>⚡</span>
+              <div>
+                <div className="text-sm font-bold" style={{ color: "#fbbf24" }}>Volume abaixo do normal</div>
+                <div className="text-xs mt-0.5" style={{ color: "var(--muted)" }}>
+                  Esta semana está mais de 35% abaixo da sua média. Pode ser hora de um deload planejado, ou verifique se não perdeu sessões.
+                </div>
+              </div>
+            </div>
+          )}
+
           {/* Resumo */}
-          <div className="grid grid-cols-2 gap-2 mb-5">
+          <div className="grid grid-cols-3 gap-2 mb-5">
             <Card className="!p-3">
               <div className="text-xs" style={{ color: "var(--muted)" }}>
                 Exercícios
@@ -268,13 +339,22 @@ export default function StatsPage() {
             </Card>
             <Card className="!p-3">
               <div className="text-xs" style={{ color: "var(--muted)" }}>
-                Volume total
+                Volume
               </div>
               <div className="text-2xl font-bold tabular mt-0.5">
                 {totalVolume >= 1000
                   ? `${(totalVolume / 1000).toFixed(1)}t`
                   : `${Math.round(totalVolume)}kg`}
               </div>
+            </Card>
+            <Card className="!p-3">
+              <div className="text-xs" style={{ color: "var(--muted)" }}>
+                Freq/sem
+              </div>
+              <div className="text-2xl font-bold tabular mt-0.5">
+                {weeklyFrequency !== null ? weeklyFrequency : "—"}
+              </div>
+              <div className="text-xs mt-0.5" style={{ color: "var(--faint)" }}>12 sem</div>
             </Card>
           </div>
 
@@ -421,6 +501,33 @@ export default function StatsPage() {
                           className="h-full rounded-full transition-all duration-500"
                           style={{ width: `${pct}%`, background: "var(--primary)" }}
                         />
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              </Card>
+            </>
+          )}
+
+          {/* Volume por dia da semana */}
+          {dayOfWeekVolume.some((d) => d.sets > 0) && (
+            <>
+              <Eyebrow className="mb-2">Volume por dia da semana</Eyebrow>
+              <Card className="mb-5">
+                <div className="space-y-2.5">
+                  {dayOfWeekVolume.map(({ day, sets, pct }) => (
+                    <div key={day} className="flex items-center gap-3">
+                      <div className="text-xs font-bold w-7 flex-shrink-0 tabular" style={{ color: "var(--muted)" }}>
+                        {day}
+                      </div>
+                      <div className="flex-1 h-2 rounded-full overflow-hidden" style={{ background: "var(--surface-strong)" }}>
+                        <div
+                          className="h-full rounded-full transition-all duration-500"
+                          style={{ width: `${pct}%`, background: "var(--accent)" }}
+                        />
+                      </div>
+                      <div className="text-xs tabular font-medium w-12 text-right flex-shrink-0" style={{ color: sets > 0 ? "var(--text)" : "var(--faint)" }}>
+                        {sets > 0 ? `${sets}s` : "—"}
                       </div>
                     </div>
                   ))}
