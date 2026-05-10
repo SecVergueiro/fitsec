@@ -190,6 +190,25 @@ export default function SessaoAtivaPage() {
     return true;
   }
 
+  async function editSet(exIdx: number, setId: string, weight: number, reps: number, rir: number | null) {
+    const { error } = await supabase
+      .from("session_sets")
+      .update({ weight_kg: weight, reps, rir } as any)
+      .eq("id", setId);
+    if (error) { toast.error("Erro ao editar série"); return; }
+    setExercises((prev) => {
+      const next = [...prev];
+      next[exIdx] = {
+        ...next[exIdx],
+        sets: next[exIdx].sets.map((s) =>
+          s.id === setId ? { ...s, weight_kg: weight, reps, rir } : s
+        ),
+      };
+      return next;
+    });
+    toast.success("Série atualizada");
+  }
+
   function deleteSet(exIdx: number, setId: string) {
     const removedSet = exercises[exIdx].sets.find((s) => s.id === setId);
     setExercises((prev) => {
@@ -440,6 +459,7 @@ export default function SessaoAtivaPage() {
               isReadOnly={isCompleted}
               onActivate={() => setActiveIdx(idx)}
               onAddSet={(weight, reps, rir, isWarmup) => addSet(idx, weight, reps, rir, isWarmup)}
+              onEditSet={(setId, weight, reps, rir) => editSet(idx, setId, weight, reps, rir)}
               onDeleteSet={(setId) => deleteSet(idx, setId)}
               onToggleCompleted={() => toggleCompleted(idx)}
             />
@@ -501,6 +521,7 @@ function ExerciseCard({
   isReadOnly,
   onActivate,
   onAddSet,
+  onEditSet,
   onDeleteSet,
   onToggleCompleted,
 }: {
@@ -510,6 +531,7 @@ function ExerciseCard({
   isReadOnly: boolean;
   onActivate: () => void;
   onAddSet: (weight: number, reps: number, rir: number | null, isWarmup: boolean) => Promise<boolean>;
+  onEditSet: (setId: string, weight: number, reps: number, rir: number | null) => void;
   onDeleteSet: (setId: string) => void;
   onToggleCompleted: () => void;
 }) {
@@ -621,7 +643,7 @@ function ExerciseCard({
           <div
             className="grid items-center text-xs font-bold pb-1.5 mb-1"
             style={{
-              gridTemplateColumns: "24px 1fr 1fr 1fr 28px",
+              gridTemplateColumns: "24px 1fr 1fr 1fr 52px",
               gap: "8px",
               color: "var(--faint)",
               letterSpacing: "0.08em",
@@ -640,6 +662,7 @@ function ExerciseCard({
               key={s.id}
               set={s}
               setNumber={`A${i + 1}`}
+              onEdit={isReadOnly ? undefined : (w, r, rir) => onEditSet(s.id, w, r, rir)}
               onDelete={isReadOnly ? undefined : () => onDeleteSet(s.id)}
             />
           ))}
@@ -648,6 +671,7 @@ function ExerciseCard({
               key={s.id}
               set={s}
               setNumber={String(i + 1)}
+              onEdit={isReadOnly ? undefined : (w, r, rir) => onEditSet(s.id, w, r, rir)}
               onDelete={isReadOnly ? undefined : () => onDeleteSet(s.id)}
             />
           ))}
@@ -889,34 +913,98 @@ function FinishSessionModal({
 function SetRow({
   set,
   setNumber,
+  onEdit,
   onDelete,
 }: {
   set: SessionSet;
   setNumber: string;
+  onEdit?: (weight: number, reps: number, rir: number | null) => void;
   onDelete?: () => void;
 }) {
+  const [editing, setEditing] = useState(false);
+  const [w, setW] = useState(String(set.weight_kg));
+  const [r, setR] = useState(String(set.reps));
+  const [rirVal, setRirVal] = useState(set.rir != null ? String(set.rir) : "");
+
+  function handleSave() {
+    const weight = parseFloat(w);
+    const reps = parseInt(r);
+    if (!weight || weight <= 0 || !reps || reps <= 0) return;
+    onEdit?.(weight, reps, rirVal ? parseInt(rirVal) : null);
+    setEditing(false);
+  }
+
+  function handleCancel() {
+    setW(String(set.weight_kg));
+    setR(String(set.reps));
+    setRirVal(set.rir != null ? String(set.rir) : "");
+    setEditing(false);
+  }
+
+  const numStyle = {
+    background: "var(--background)",
+    border: "0.5px solid var(--border-strong)",
+    color: "var(--text)",
+    outline: "none",
+    minHeight: "auto",
+  };
+
+  if (editing) {
+    return (
+      <div
+        className="grid items-center py-1"
+        style={{ gridTemplateColumns: "24px 1fr 1fr 1fr 52px", gap: "6px" }}
+      >
+        <div className="font-bold text-xs" style={{ color: set.is_warmup ? "var(--muted)" : "var(--accent)" }}>
+          {setNumber}
+        </div>
+        <input
+          type="number" inputMode="decimal" value={w} onChange={(e) => setW(e.target.value)}
+          step="0.5" className="text-center text-xs font-bold tabular rounded py-1.5"
+          style={numStyle} autoFocus
+        />
+        <input
+          type="number" inputMode="numeric" value={r} onChange={(e) => setR(e.target.value)}
+          className="text-center text-xs font-bold tabular rounded py-1.5"
+          style={numStyle}
+        />
+        <input
+          type="number" inputMode="numeric" value={rirVal} onChange={(e) => setRirVal(e.target.value)}
+          placeholder="—" className="text-center text-xs tabular rounded py-1.5"
+          style={numStyle}
+        />
+        <div className="flex gap-1.5 justify-end">
+          <button onClick={handleSave} style={{ color: "var(--accent)", fontSize: "15px", minHeight: "auto" }}>✓</button>
+          <button onClick={handleCancel} style={{ color: "var(--muted)", fontSize: "15px", minHeight: "auto" }}>×</button>
+        </div>
+      </div>
+    );
+  }
+
   return (
     <div
       className="grid items-center py-1.5 text-sm"
-      style={{ gridTemplateColumns: "24px 1fr 1fr 1fr 28px", gap: "8px" }}
+      style={{ gridTemplateColumns: "24px 1fr 1fr 1fr 52px", gap: "8px" }}
     >
-      <div
-        className="font-bold text-xs"
-        style={{ color: set.is_warmup ? "var(--muted)" : "var(--accent)" }}
-      >
+      <div className="font-bold text-xs" style={{ color: set.is_warmup ? "var(--muted)" : "var(--accent)" }}>
         {setNumber}
       </div>
       <div className="tabular font-medium">{fmtKg(set.weight_kg)}</div>
       <div className="tabular font-medium">{set.reps}</div>
-      <div className="tabular" style={{ color: "var(--muted)" }}>
-        {set.rir ?? "—"}
-      </div>
-      <div>
+      <div className="tabular" style={{ color: "var(--muted)" }}>{set.rir ?? "—"}</div>
+      <div className="flex gap-1.5 justify-end">
+        {onEdit && (
+          <button
+            onClick={() => setEditing(true)}
+            style={{ color: "var(--faint)", minHeight: "auto", padding: "2px 3px", fontSize: "12px" }}
+          >
+            ✎
+          </button>
+        )}
         {onDelete && (
           <button
             onClick={onDelete}
-            className="text-xs"
-            style={{ color: "var(--faint)", minHeight: "auto", padding: "2px 4px" }}
+            style={{ color: "var(--faint)", minHeight: "auto", padding: "2px 3px", fontSize: "13px" }}
           >
             ×
           </button>
