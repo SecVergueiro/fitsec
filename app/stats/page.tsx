@@ -6,6 +6,15 @@ import { supabase } from "@/lib/supabase";
 import { Card, Eyebrow, PageHeader } from "@/components/ui";
 import { fmtKg, fmtRelativeDate, MUSCLE_LABELS } from "@/lib/utils";
 import type { Exercise, PersonalRecord } from "@/lib/database.types";
+import {
+  BarChart,
+  Bar,
+  XAxis,
+  YAxis,
+  Tooltip,
+  ResponsiveContainer,
+  CartesianGrid,
+} from "recharts";
 
 interface ExerciseWithStats {
   exercise: Exercise;
@@ -21,6 +30,12 @@ interface MuscleVolume {
   pct: number;
 }
 
+interface WeekBucket {
+  label: string;
+  volume: number;
+  startStr: string;
+}
+
 export default function StatsPage() {
   const [loading, setLoading] = useState(true);
   const [timeFilter, setTimeFilter] = useState<TimeFilter>("all");
@@ -32,6 +47,7 @@ export default function StatsPage() {
   const [recentPRs, setRecentPRs] = useState<PersonalRecord[]>([]);
   const [totalVolume, setTotalVolume] = useState(0);
   const [muscleVolumes, setMuscleVolumes] = useState<MuscleVolume[]>([]);
+  const [weeklyTrend, setWeeklyTrend] = useState<WeekBucket[]>([]);
   const [search, setSearch] = useState("");
 
   useEffect(() => {
@@ -42,7 +58,7 @@ export default function StatsPage() {
     if (rawSets.length > 0 || rawExercises.length > 0) {
       computeStats(rawSets, rawExercises, timeFilter, activeMesoStart);
     }
-  // eslint-disable-next-line react-hooks/exhaustive-deps
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [rawSets, rawExercises, timeFilter, activeMesoStart]);
 
   async function load() {
@@ -139,8 +155,7 @@ export default function StatsPage() {
     workingSets.forEach((s: any) => {
       const ex = allExercises.find((e) => e.id === s.exercise_id);
       if (!ex) return;
-      byMuscle[ex.primary_muscle] =
-        (byMuscle[ex.primary_muscle] ?? 0) + s.weight_kg * s.reps;
+      byMuscle[ex.primary_muscle] = (byMuscle[ex.primary_muscle] ?? 0) + s.weight_kg * s.reps;
     });
     const maxVol = Math.max(...Object.values(byMuscle), 1);
     const muscles: MuscleVolume[] = Object.entries(byMuscle)
@@ -148,15 +163,42 @@ export default function StatsPage() {
       .sort((a, b) => b.volume - a.volume)
       .slice(0, 6);
     setMuscleVolumes(muscles);
+
+    // Volume semanal — últimas 8 semanas (sempre usa todos os sets, ignora filtro temporal)
+    const allWorkingSets = allSets.filter((s: any) => !s.is_warmup);
+    const startOfCurrentWeek = new Date(now);
+    startOfCurrentWeek.setDate(now.getDate() - now.getDay());
+    startOfCurrentWeek.setHours(0, 0, 0, 0);
+
+    const trend: WeekBucket[] = [];
+    for (let i = 7; i >= 0; i--) {
+      const weekStart = new Date(startOfCurrentWeek);
+      weekStart.setDate(weekStart.getDate() - i * 7);
+      const weekEnd = new Date(weekStart);
+      weekEnd.setDate(weekEnd.getDate() + 7);
+      const startStr = weekStart.toISOString().slice(0, 10);
+      const endStr = weekEnd.toISOString().slice(0, 10);
+      const vol = allWorkingSets
+        .filter((s: any) => {
+          const d = s.performed_at.slice(0, 10);
+          return d >= startStr && d < endStr;
+        })
+        .reduce((sum: number, s: any) => sum + s.weight_kg * s.reps, 0);
+      trend.push({
+        label: weekStart.toLocaleDateString("pt-BR", { day: "2-digit", month: "2-digit" }),
+        volume: Math.round(vol),
+        startStr,
+      });
+    }
+    setWeeklyTrend(trend);
   }
 
   const filtered = search.trim()
-    ? data.filter((d) =>
-        d.exercise.name.toLowerCase().includes(search.toLowerCase())
-      )
+    ? data.filter((d) => d.exercise.name.toLowerCase().includes(search.toLowerCase()))
     : data;
 
   const hasBlock = activeMesoStart !== null;
+  const hasTrend = weeklyTrend.some((w) => w.volume > 0);
 
   return (
     <div className="fade-in">
@@ -183,7 +225,7 @@ export default function StatsPage() {
 
       {loading ? (
         <StatsSkeleton />
-      ) : data.length === 0 ? (
+      ) : data.length === 0 && !hasTrend ? (
         <Card variant="ghost" className="text-center py-8">
           <div className="font-bold mb-1" style={{ color: "var(--primary)" }}>
             Sem dados{timeFilter !== "all" ? " no período" : ""}
@@ -215,6 +257,61 @@ export default function StatsPage() {
               </div>
             </Card>
           </div>
+
+          {/* Volume semanal — tendência 8 semanas */}
+          {hasTrend && (
+            <>
+              <Eyebrow className="mb-2">Volume semanal · 8 semanas</Eyebrow>
+              <Card className="!p-3 mb-5">
+                <ResponsiveContainer width="100%" height={140}>
+                  <BarChart
+                    data={weeklyTrend}
+                    margin={{ top: 8, right: 5, left: -20, bottom: 0 }}
+                  >
+                    <CartesianGrid
+                      stroke="rgba(237, 238, 239, 0.05)"
+                      strokeDasharray="2 3"
+                      vertical={false}
+                    />
+                    <XAxis
+                      dataKey="label"
+                      tick={{ fill: "rgba(237, 238, 239, 0.35)", fontSize: 9 }}
+                      tickLine={false}
+                      axisLine={{ stroke: "rgba(237, 238, 239, 0.1)" }}
+                      interval={1}
+                    />
+                    <YAxis
+                      tick={{ fill: "rgba(237, 238, 239, 0.35)", fontSize: 9 }}
+                      tickLine={false}
+                      axisLine={false}
+                      tickFormatter={(v) =>
+                        v >= 1000 ? `${(v / 1000).toFixed(1)}t` : `${v}`
+                      }
+                    />
+                    <Tooltip
+                      contentStyle={{
+                        background: "var(--background)",
+                        border: "0.5px solid var(--border-strong)",
+                        borderRadius: "8px",
+                        fontSize: "12px",
+                      }}
+                      labelStyle={{ color: "var(--muted)" }}
+                      formatter={(v: any) => [
+                        v >= 1000 ? `${(v / 1000).toFixed(1)}t` : `${v} kg`,
+                        "volume",
+                      ]}
+                      cursor={{ fill: "rgba(255,255,255,0.04)" }}
+                    />
+                    <Bar
+                      dataKey="volume"
+                      fill="var(--primary)"
+                      radius={[3, 3, 0, 0]}
+                    />
+                  </BarChart>
+                </ResponsiveContainer>
+              </Card>
+            </>
+          )}
 
           {/* Volume por músculo */}
           {muscleVolumes.length > 0 && (
@@ -250,7 +347,7 @@ export default function StatsPage() {
             </>
           )}
 
-          {/* Melhores PRs */}
+          {/* Top 5 e1RM */}
           {recentPRs.length > 0 && (
             <>
               <Eyebrow className="mb-2">Top 5 e1RM</Eyebrow>
@@ -287,54 +384,56 @@ export default function StatsPage() {
           )}
 
           {/* Lista de exercícios */}
-          <Eyebrow className="mb-2">Por exercício</Eyebrow>
-          <input
-            type="text"
-            value={search}
-            onChange={(e) => setSearch(e.target.value)}
-            placeholder="Buscar..."
-            className="w-full rounded-lg px-3 py-2.5 text-sm mb-3"
-            style={{
-              background: "var(--surface)",
-              border: "0.5px solid var(--border)",
-              color: "var(--text)",
-              outline: "none",
-            }}
-          />
+          {data.length > 0 && (
+            <>
+              <Eyebrow className="mb-2">Por exercício</Eyebrow>
+              <input
+                type="text"
+                value={search}
+                onChange={(e) => setSearch(e.target.value)}
+                placeholder="Buscar..."
+                className="w-full rounded-lg px-3 py-2.5 text-sm mb-3"
+                style={{
+                  background: "var(--surface)",
+                  border: "0.5px solid var(--border)",
+                  color: "var(--text)",
+                  outline: "none",
+                }}
+              />
 
-          <div className="space-y-2">
-            {filtered.map((s) => (
-              <Link key={s.exercise.id} href={`/stats/${s.exercise.id}`}>
-                <Card className="!p-3 mb-2">
-                  <div className="flex justify-between items-center">
-                    <div className="flex-1 min-w-0">
-                      <div className="font-medium text-sm truncate">
-                        {s.exercise.name}
-                      </div>
-                      <div className="text-xs mt-0.5" style={{ color: "var(--muted)" }}>
-                        {(MUSCLE_LABELS as Record<string, string>)[
-                          s.exercise.primary_muscle
-                        ]} · {s.setsCount} séries
-                      </div>
-                    </div>
-                    {s.pr && (
-                      <div className="text-right flex-shrink-0 ml-2">
-                        <div className="text-xs" style={{ color: "var(--muted)" }}>
-                          e1RM
+              <div className="space-y-2">
+                {filtered.map((s) => (
+                  <Link key={s.exercise.id} href={`/stats/${s.exercise.id}`}>
+                    <Card className="!p-3 mb-2">
+                      <div className="flex justify-between items-center">
+                        <div className="flex-1 min-w-0">
+                          <div className="font-medium text-sm truncate">
+                            {s.exercise.name}
+                          </div>
+                          <div className="text-xs mt-0.5" style={{ color: "var(--muted)" }}>
+                            {(MUSCLE_LABELS as Record<string, string>)[s.exercise.primary_muscle]} · {s.setsCount} séries
+                          </div>
                         </div>
-                        <div
-                          className="text-sm font-bold tabular"
-                          style={{ color: "var(--accent)" }}
-                        >
-                          {fmtKg(s.pr.e1rm)}
-                        </div>
+                        {s.pr && (
+                          <div className="text-right flex-shrink-0 ml-2">
+                            <div className="text-xs" style={{ color: "var(--muted)" }}>
+                              e1RM
+                            </div>
+                            <div
+                              className="text-sm font-bold tabular"
+                              style={{ color: "var(--accent)" }}
+                            >
+                              {fmtKg(s.pr.e1rm)}
+                            </div>
+                          </div>
+                        )}
                       </div>
-                    )}
-                  </div>
-                </Card>
-              </Link>
-            ))}
-          </div>
+                    </Card>
+                  </Link>
+                ))}
+              </div>
+            </>
+          )}
         </>
       )}
     </div>
@@ -350,6 +449,7 @@ function StatsSkeleton() {
         <Card className="!p-3 h-20 animate-pulse">{" "}</Card>
         <Card className="!p-3 h-20 animate-pulse">{" "}</Card>
       </div>
+      <Card className="mb-5 h-36 animate-pulse">{" "}</Card>
       <Card className="mb-5">
         <div className="space-y-3">
           {[1, 2, 3, 4].map((i) => (

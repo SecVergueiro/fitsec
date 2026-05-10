@@ -8,7 +8,9 @@ import { Card, Eyebrow, PageHeader, Pill } from "@/components/ui";
 import { Button, Spinner } from "@/components/Button";
 import { useToast } from "@/components/Toast";
 import { fmtRelativeDate, WEEKDAY_LABELS } from "@/lib/utils";
-import type { TemplateDay, WorkoutSession } from "@/lib/database.types";
+import type { Mesocycle, TemplateDay, WorkoutSession } from "@/lib/database.types";
+
+const SESSION_MAX_MINUTES = 240;
 
 export default function SessaoIndex() {
   const router = useRouter();
@@ -16,8 +18,10 @@ export default function SessaoIndex() {
   const [loading, setLoading] = useState(true);
   const [activeSession, setActiveSession] = useState<WorkoutSession | null>(null);
   const [todayDay, setTodayDay] = useState<TemplateDay | null>(null);
+  const [exerciseCount, setExerciseCount] = useState(0);
   const [recentSessions, setRecentSessions] = useState<(WorkoutSession & { day_name?: string })[]>([]);
   const [activeMesoId, setActiveMesoId] = useState<string | null>(null);
+  const [activeMeso, setActiveMeso] = useState<Mesocycle | null>(null);
   const [starting, setStarting] = useState(false);
 
   useEffect(() => {
@@ -27,7 +31,7 @@ export default function SessaoIndex() {
   async function init() {
     setLoading(true);
 
-    // 1. Sessão em andamento (não tem completed_at)
+    // 1. Sessão em andamento
     const { data: active } = await supabase
       .from("workout_sessions")
       .select("*")
@@ -37,7 +41,21 @@ export default function SessaoIndex() {
       .maybeSingle();
 
     if (active) {
-      setActiveSession(active as WorkoutSession);
+      const elapsedMin = (Date.now() - new Date((active as WorkoutSession).started_at).getTime()) / 60000;
+      if (elapsedMin > SESSION_MAX_MINUTES) {
+        // Auto-finaliza sessão que ficou aberta >4h
+        const autoEnd = new Date(new Date((active as WorkoutSession).started_at).getTime() + SESSION_MAX_MINUTES * 60000);
+        await supabase
+          .from("workout_sessions")
+          .update({
+            completed_at: autoEnd.toISOString(),
+            ended_at: autoEnd.toISOString(),
+            duration_minutes: SESSION_MAX_MINUTES,
+          } as any)
+          .eq("id", (active as WorkoutSession).id);
+      } else {
+        setActiveSession(active as WorkoutSession);
+      }
     }
 
     // 2. Mesociclo ativo
@@ -50,8 +68,10 @@ export default function SessaoIndex() {
 
     let templateId: string | null = null;
     if (meso) {
-      templateId = (meso as any).template_id;
-      setActiveMesoId((meso as any).id);
+      const m = meso as Mesocycle;
+      templateId = (m as any).template_id;
+      setActiveMesoId((m as any).id);
+      setActiveMeso(m);
     } else {
       const { data: tpl } = await supabase
         .from("templates")
@@ -72,9 +92,17 @@ export default function SessaoIndex() {
         .eq("weekday", todayWeekday)
         .maybeSingle();
       setTodayDay(dayData as TemplateDay);
+
+      if (dayData) {
+        const { count } = await supabase
+          .from("template_exercises")
+          .select("*", { count: "exact", head: true })
+          .eq("template_day_id", (dayData as TemplateDay).id);
+        setExerciseCount(count ?? 0);
+      }
     }
 
-    // 4. Sessões recentes (últimos 30 dias)
+    // 4. Sessões recentes
     const { data: recent } = await supabase
       .from("workout_sessions")
       .select("*, template_days(name)")
@@ -110,7 +138,6 @@ export default function SessaoIndex() {
 
     const sessionId = (session as any).id;
 
-    // Se veio de um template_day, copia os exercicios prescritos
     if (templateDayId) {
       const { data: prescribed } = await supabase
         .from("template_exercises")
@@ -137,6 +164,16 @@ export default function SessaoIndex() {
     router.push(`/sessao/${sessionId}`);
   }
 
+  // Deload hint: current meso week >= deload_week
+  const mesoCurrentWeek = activeMeso
+    ? Math.floor((Date.now() - new Date(activeMeso.start_date).getTime()) / (7 * 24 * 60 * 60 * 1000)) + 1
+    : 0;
+  const showDeloadHint =
+    activeMeso &&
+    activeMeso.deload_week != null &&
+    mesoCurrentWeek >= activeMeso.deload_week &&
+    mesoCurrentWeek <= (activeMeso.total_weeks + 1);
+
   if (loading) {
     return (
       <div className="flex justify-center py-10">
@@ -149,21 +186,45 @@ export default function SessaoIndex() {
     <div className="fade-in">
       <PageHeader eyebrow="Sessão" title="Treino" />
 
+      {/* Deload hint */}
+      {showDeloadHint && (
+        <div
+          className="mb-4 px-3 py-2.5 rounded-xl text-xs font-medium flex items-center gap-2"
+          style={{
+            background: "rgba(251, 191, 36, 0.08)",
+            border: "0.5px solid rgba(251, 191, 36, 0.3)",
+            color: "#fbbf24",
+          }}
+        >
+          <span>★</span>
+          <span>
+            Semana {mesoCurrentWeek} de {activeMeso!.total_weeks} — deload recomendado. Reduza volume e intensidade.
+          </span>
+        </div>
+      )}
+
+      {/* Sessão em andamento */}
       {activeSession ? (
         <Card variant="strong" className="mb-5">
-          <Eyebrow className="mb-1" style={{ color: "var(--text)" } as any}>
-            Em andamento
-          </Eyebrow>
-          <div className="font-bold text-base mb-3">
-            Sessão iniciada {fmtRelativeDate(activeSession.started_at)}
+          <div className="flex items-center gap-2 mb-1">
+            <div
+              className="w-2 h-2 rounded-full flex-shrink-0"
+              style={{ background: "var(--accent)", boxShadow: "0 0 6px var(--accent)" }}
+            />
+            <Eyebrow style={{ color: "var(--text)" } as any}>Em andamento</Eyebrow>
+          </div>
+          <div className="font-bold text-base mb-1">Treino ativo</div>
+          <div className="text-xs mb-3" style={{ color: "var(--muted)" }}>
+            Iniciado {fmtRelativeDate(activeSession.started_at)}
+            {(() => {
+              const min = Math.floor((Date.now() - new Date(activeSession.started_at).getTime()) / 60000);
+              return min > 0 ? ` · ${min} min` : "";
+            })()}
           </div>
           <Link href={`/sessao/${activeSession.id}`}>
             <div
               className="py-3 rounded-lg text-center text-sm font-bold cursor-pointer"
-              style={{
-                background: "var(--primary)",
-                color: "var(--background)",
-              }}
+              style={{ background: "var(--primary)", color: "var(--background)" }}
             >
               Continuar →
             </div>
@@ -171,27 +232,38 @@ export default function SessaoIndex() {
         </Card>
       ) : todayDay ? (
         <Card variant="strong" className="mb-5">
-          <div className="flex justify-between items-center mb-2">
+          <div className="flex justify-between items-center mb-1">
             <Eyebrow style={{ color: "var(--text)" } as any}>Treino de hoje</Eyebrow>
             <Pill variant="primary">{todayDay.name}</Pill>
           </div>
-          <div className="text-sm mb-3" style={{ color: "var(--muted)" }}>
+          <div className="text-xs mb-4" style={{ color: "var(--muted)" }}>
             {todayDay.weekday !== null ? WEEKDAY_LABELS[todayDay.weekday] : ""}
+            {exerciseCount > 0 ? ` · ${exerciseCount} exercícios` : ""}
+            {activeMeso ? ` · Semana ${mesoCurrentWeek}/${activeMeso.total_weeks}` : ""}
           </div>
           <Button onClick={() => startSession(todayDay.id)} disabled={starting} fullWidth>
-            {starting ? "Iniciando..." : "Iniciar sessão →"}
+            {starting ? "Iniciando..." : "Iniciar treino →"}
           </Button>
+          <button
+            onClick={() => startSession(null)}
+            disabled={starting}
+            className="w-full text-center text-xs mt-3 py-1"
+            style={{ color: "var(--muted)", minHeight: "auto" }}
+          >
+            Iniciar treino livre
+          </button>
         </Card>
       ) : (
-        <Card variant="ghost" className="mb-5 text-center">
-          <div className="font-bold mb-1" style={{ color: "var(--primary)" }}>
-            Sem treino programado
+        <Card variant="strong" className="mb-5">
+          <Eyebrow style={{ color: "var(--text)" } as any} className="mb-1">
+            Hoje
+          </Eyebrow>
+          <div className="font-bold text-base mb-1">Dia de descanso</div>
+          <div className="text-xs mb-4" style={{ color: "var(--muted)" }}>
+            Nenhum treino programado pra hoje
           </div>
-          <div className="text-sm mb-3" style={{ color: "var(--muted)" }}>
-            Você pode iniciar um treino livre
-          </div>
-          <Button onClick={() => startSession(null)} disabled={starting} variant="secondary">
-            {starting ? "Iniciando..." : "Treino livre"}
+          <Button onClick={() => startSession(null)} disabled={starting} fullWidth>
+            {starting ? "Iniciando..." : "Treino livre →"}
           </Button>
         </Card>
       )}
@@ -215,8 +287,12 @@ export default function SessaoIndex() {
                   <div>
                     <div className="font-medium text-sm">{s.day_name ?? "Treino livre"}</div>
                     <div className="text-xs mt-0.5" style={{ color: "var(--muted)" }}>
-                      {new Date(s.session_date + "T12:00:00").toLocaleDateString("pt-BR", { weekday: "short", day: "numeric", month: "short" })}
-                      {s.duration_minutes && ` · ${s.duration_minutes} min`}
+                      {new Date(s.session_date + "T12:00:00").toLocaleDateString("pt-BR", {
+                        weekday: "short",
+                        day: "numeric",
+                        month: "short",
+                      })}
+                      {s.duration_minutes ? ` · ${s.duration_minutes} min` : ""}
                     </div>
                   </div>
                   <div className="text-xs" style={{ color: "var(--accent)" }}>→</div>

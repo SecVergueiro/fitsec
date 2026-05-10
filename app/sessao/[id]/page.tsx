@@ -101,7 +101,6 @@ export default function SessaoAtivaPage() {
         if (prevSets && prevSets.length > 0) {
           const all = prevSets as any[];
 
-          // Best e1RM across all history
           const best = all.reduce(
             (acc, s) => {
               const e1 = estimate1RM(s.weight_kg, s.reps);
@@ -111,7 +110,6 @@ export default function SessaoAtivaPage() {
           );
           if (best.e1rm > 0) prevBest = best;
 
-          // Last session's sets (first session_id in desc order, reversed to chronological)
           const lastId = all[0].session_id;
           const lastSets = all.filter((s) => s.session_id === lastId).reverse();
           prevSession = {
@@ -162,7 +160,6 @@ export default function SessaoAtivaPage() {
       return false;
     }
 
-    // Detecção de PR — comparar e1RM da série nova com melhor histórico + melhor da sessão atual
     if (!isWarmup) {
       const new1RM = estimate1RM(weight, reps);
       const historicalBest = ex.prevBest?.e1rm ?? 0;
@@ -343,7 +340,7 @@ export default function SessaoAtivaPage() {
 
   return (
     <div className="fade-in">
-      {/* Header sticky — contém cronômetro e timer de descanso (persiste ao rolar) */}
+      {/* Sticky header */}
       <div
         className="sticky -mx-5 px-5 mb-3 z-10"
         style={{
@@ -353,7 +350,6 @@ export default function SessaoAtivaPage() {
           borderBottom: "0.5px solid var(--border)",
         }}
       >
-        {/* Linha de navegação */}
         <div className="flex justify-between items-center py-3">
           <Link
             href="/sessao"
@@ -381,7 +377,6 @@ export default function SessaoAtivaPage() {
           </div>
         </div>
 
-        {/* Timer de descanso integrado ao sticky — sempre visível ao rolar */}
         {restRemaining !== null && (
           <div className="pb-3">
             <div
@@ -441,12 +436,15 @@ export default function SessaoAtivaPage() {
       </div>
 
       {exercises.length === 0 ? (
-        <Card variant="ghost" className="text-center py-5">
-          <div className="text-sm mb-3" style={{ color: "var(--muted)" }}>
-            Nenhum exercício na sessão ainda
+        <Card variant="ghost" className="text-center py-8">
+          <div className="text-sm mb-1 font-medium">Sessão vazia</div>
+          <div className="text-xs mb-4" style={{ color: "var(--muted)" }}>
+            Adicione exercícios para começar
           </div>
           {!isCompleted && (
-            <Button onClick={() => setShowAddExercise(true)}>+ Adicionar exercício</Button>
+            <Button onClick={() => setShowAddExercise(true)} fullWidth>
+              + Adicionar exercício
+            </Button>
           )}
         </Card>
       ) : (
@@ -468,25 +466,51 @@ export default function SessaoAtivaPage() {
         </div>
       )}
 
+      {/* Add exercise button — inline at bottom of list */}
       {!isCompleted && exercises.length > 0 && (
-        <Card
-          variant="ghost"
-          className="text-center cursor-pointer mb-3"
+        <button
           onClick={() => setShowAddExercise(true)}
+          className="w-full py-3 rounded-xl text-sm font-bold mb-16"
+          style={{
+            border: "1px dashed var(--border-strong)",
+            color: "var(--primary)",
+            background: "transparent",
+          }}
         >
-          <div className="font-bold" style={{ color: "var(--primary)" }}>
-            + Adicionar exercício extra
-          </div>
-        </Card>
+          + Adicionar exercício
+        </button>
       )}
 
       {!isCompleted && (
         <button
           onClick={abandonSession}
-          className="text-xs mt-6 block mx-auto"
+          className="text-xs mt-2 mb-4 block mx-auto"
           style={{ color: "#ff8888", minHeight: "auto" }}
         >
           Descartar sessão
+        </button>
+      )}
+
+      {/* Floating action button — add exercise */}
+      {!isCompleted && exercises.length > 0 && (
+        <button
+          onClick={() => setShowAddExercise(true)}
+          className="fixed z-30 flex items-center justify-center rounded-full"
+          style={{
+            bottom: "80px",
+            right: "20px",
+            width: "52px",
+            height: "52px",
+            background: "var(--primary)",
+            color: "var(--background)",
+            boxShadow: "0 4px 20px rgba(0,0,0,0.45)",
+          }}
+          aria-label="Adicionar exercício"
+        >
+          <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round">
+            <line x1="12" y1="5" x2="12" y2="19" />
+            <line x1="5" y1="12" x2="19" y2="12" />
+          </svg>
         </button>
       )}
 
@@ -545,7 +569,6 @@ function ExerciseCard({
   const [notes, setNotes] = useState(exercise.notes ?? "");
   const notesTimerRef = useRef<NodeJS.Timeout | null>(null);
 
-  // Pre-preenche com valores da serie anterior
   useEffect(() => {
     const lastSet = [...exercise.sets].reverse().find((s) => !s.is_warmup);
     if (lastSet && !weight) {
@@ -585,6 +608,16 @@ function ExerciseCard({
     notesTimerRef.current = setTimeout(async () => {
       await supabase.from("session_exercises").update({ notes: value || null } as any).eq("id", exercise.id);
     }, 800);
+  }
+
+  // Warmup base: last session's top weight, or all-time best
+  const warmupBase = exercise.prevSession?.maxWeight ?? exercise.prevBest?.weight ?? 0;
+
+  function fillWarmup(pct: number, warmupReps: number) {
+    const w = Math.round((warmupBase * pct) / 2.5) * 2.5;
+    setWeight(String(w > 0 ? w : warmupBase * pct));
+    setReps(String(warmupReps));
+    setIsWarmup(true);
   }
 
   const realSets = exercise.sets.filter((s) => !s.is_warmup);
@@ -638,7 +671,7 @@ function ExerciseCard({
         )}
       </div>
 
-      {/* Lista de series feitas */}
+      {/* Séries registradas */}
       {(realSets.length > 0 || warmupSets.length > 0) && (
         <div className="mt-3 space-y-1">
           <div
@@ -681,10 +714,7 @@ function ExerciseCard({
 
       {/* Última sessão */}
       {exercise.prevSession && (
-        <div
-          className="mt-2 pt-2"
-          style={{ borderTop: "0.5px solid var(--border)" }}
-        >
+        <div className="mt-2 pt-2" style={{ borderTop: "0.5px solid var(--border)" }}>
           <div className="flex items-center justify-between mb-1">
             <span
               className="text-xs font-bold"
@@ -698,10 +728,7 @@ function ExerciseCard({
               const delta = w - exercise.prevSession!.maxWeight;
               if (delta === 0) return null;
               return (
-                <span
-                  className="text-xs font-bold tabular"
-                  style={{ color: delta > 0 ? "var(--accent)" : "#ff8888" }}
-                >
+                <span className="text-xs font-bold tabular" style={{ color: delta > 0 ? "var(--accent)" : "#ff8888" }}>
                   {delta > 0 ? "↑" : "↓"} {delta > 0 ? "+" : ""}{fmtKg(Math.abs(delta))} kg
                 </span>
               );
@@ -718,9 +745,47 @@ function ExerciseCard({
         </div>
       )}
 
-      {/* Form de adicionar serie */}
+      {/* Form de adicionar série */}
       {isActive && !isCompleted && !isReadOnly && (
         <div className="mt-3" onClick={(e) => e.stopPropagation()}>
+          {/* Aquecimento sugerido */}
+          {warmupBase > 0 && (
+            <div className="mb-3 pt-2" style={{ borderTop: "0.5px solid var(--border)" }}>
+              <div
+                className="text-xs font-bold mb-2"
+                style={{ color: "var(--faint)", letterSpacing: "0.08em", textTransform: "uppercase" }}
+              >
+                Aquecimento · base {fmtKg(warmupBase)} kg
+              </div>
+              <div className="flex gap-2">
+                {[
+                  { pct: 0.4, warmupReps: 8, label: "40%" },
+                  { pct: 0.6, warmupReps: 5, label: "60%" },
+                  { pct: 0.8, warmupReps: 3, label: "80%" },
+                ].map(({ pct, warmupReps, label }) => {
+                  const w = Math.round((warmupBase * pct) / 2.5) * 2.5;
+                  return (
+                    <button
+                      key={pct}
+                      onClick={() => fillWarmup(pct, warmupReps)}
+                      className="flex-1 py-1.5 rounded-lg text-xs font-medium"
+                      style={{
+                        background: "var(--background)",
+                        border: "0.5px solid var(--border-strong)",
+                        color: "var(--muted)",
+                        minHeight: "auto",
+                      }}
+                    >
+                      <div style={{ color: "var(--text)" }}>{fmtKg(w)}</div>
+                      <div style={{ color: "var(--faint)" }}>×{warmupReps} · {label}</div>
+                    </button>
+                  );
+                })}
+              </div>
+            </div>
+          )}
+
+          {/* Inputs kg / reps / RIR */}
           <div
             className="grid items-center mb-2"
             style={{ gridTemplateColumns: "1fr 1fr 1fr", gap: "8px" }}
@@ -772,11 +837,9 @@ function ExerciseCard({
               }}
             />
           </div>
+
           <div className="flex gap-2 items-center mb-2">
-            <label
-              className="flex items-center gap-1.5 text-xs cursor-pointer"
-              style={{ color: "var(--muted)" }}
-            >
+            <label className="flex items-center gap-1.5 text-xs cursor-pointer" style={{ color: "var(--muted)" }}>
               <input
                 type="checkbox"
                 checked={isWarmup}
@@ -786,11 +849,12 @@ function ExerciseCard({
               Aquecimento
             </label>
           </div>
+
           <textarea
             value={notes}
             onChange={(e) => handleNotesChange(e.target.value)}
-            placeholder="Notas do exercício (opcional)"
-            rows={2}
+            placeholder="Notas do exercício..."
+            rows={1}
             className="w-full rounded-md px-3 py-2 text-xs resize-none mb-2"
             style={{
               background: "var(--background)",
@@ -799,6 +863,7 @@ function ExerciseCard({
               outline: "none",
             }}
           />
+
           {/* Calculadora de anilhas inline */}
           {(() => {
             const w = parseFloat(weight);
@@ -811,8 +876,9 @@ function ExerciseCard({
               </div>
             );
           })()}
+
           <Button onClick={handleSave} disabled={saving} fullWidth size="sm">
-            {saving ? "Salvando..." : "Salvar série"}
+            {saving ? "Salvando..." : isWarmup ? "Salvar aquecimento" : "Salvar série"}
           </Button>
         </div>
       )}
@@ -838,7 +904,7 @@ function calcPlates(targetKg: number): string | null {
 }
 
 // ============================================================
-// Modal de finalização — energia + notas
+// Modal de finalização
 // ============================================================
 function FinishSessionModal({
   onFinish,
@@ -1007,28 +1073,17 @@ function SetRow({
 
   if (editing) {
     return (
-      <div
-        className="grid items-center py-1"
-        style={{ gridTemplateColumns: "24px 1fr 1fr 1fr 52px", gap: "6px" }}
-      >
+      <div className="grid items-center py-1" style={{ gridTemplateColumns: "24px 1fr 1fr 1fr 52px", gap: "6px" }}>
         <div className="font-bold text-xs" style={{ color: set.is_warmup ? "var(--muted)" : "var(--accent)" }}>
           {setNumber}
         </div>
-        <input
-          type="number" inputMode="decimal" value={w} onChange={(e) => setW(e.target.value)}
+        <input type="number" inputMode="decimal" value={w} onChange={(e) => setW(e.target.value)}
           step="0.5" className="text-center text-xs font-bold tabular rounded py-1.5"
-          style={numStyle} autoFocus
-        />
-        <input
-          type="number" inputMode="numeric" value={r} onChange={(e) => setR(e.target.value)}
-          className="text-center text-xs font-bold tabular rounded py-1.5"
-          style={numStyle}
-        />
-        <input
-          type="number" inputMode="numeric" value={rirVal} onChange={(e) => setRirVal(e.target.value)}
-          placeholder="—" className="text-center text-xs tabular rounded py-1.5"
-          style={numStyle}
-        />
+          style={numStyle} autoFocus />
+        <input type="number" inputMode="numeric" value={r} onChange={(e) => setR(e.target.value)}
+          className="text-center text-xs font-bold tabular rounded py-1.5" style={numStyle} />
+        <input type="number" inputMode="numeric" value={rirVal} onChange={(e) => setRirVal(e.target.value)}
+          placeholder="—" className="text-center text-xs tabular rounded py-1.5" style={numStyle} />
         <div className="flex gap-1.5 justify-end">
           <button onClick={handleSave} style={{ color: "var(--accent)", fontSize: "15px", minHeight: "auto" }}>✓</button>
           <button onClick={handleCancel} style={{ color: "var(--muted)", fontSize: "15px", minHeight: "auto" }}>×</button>
@@ -1038,10 +1093,7 @@ function SetRow({
   }
 
   return (
-    <div
-      className="grid items-center py-1.5 text-sm"
-      style={{ gridTemplateColumns: "24px 1fr 1fr 1fr 52px", gap: "8px" }}
-    >
+    <div className="grid items-center py-1.5 text-sm" style={{ gridTemplateColumns: "24px 1fr 1fr 1fr 52px", gap: "8px" }}>
       <div className="font-bold text-xs" style={{ color: set.is_warmup ? "var(--muted)" : "var(--accent)" }}>
         {setNumber}
       </div>
