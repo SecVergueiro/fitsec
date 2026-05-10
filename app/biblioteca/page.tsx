@@ -7,6 +7,7 @@ import { ExerciseItem } from "@/components/ExerciseItem";
 import { MUSCLE_LABELS } from "@/lib/utils";
 import type { Exercise } from "@/lib/database.types";
 import { NewExerciseModal } from "./NewExerciseModal";
+import { EditExerciseModal } from "./EditExerciseModal";
 
 const MUSCLE_FILTERS = [
   { value: "todos", label: "Todos" },
@@ -24,6 +25,7 @@ export default function BibliotecaPage() {
   const [search, setSearch] = useState("");
   const [muscleFilter, setMuscleFilter] = useState<string>("todos");
   const [showNewModal, setShowNewModal] = useState(false);
+  const [editingExercise, setEditingExercise] = useState<Exercise | null>(null);
 
   useEffect(() => {
     loadExercises();
@@ -165,9 +167,31 @@ export default function BibliotecaPage() {
           <div className="mb-4">
             {filtered.parents.map((ex) => (
               <div key={ex.id}>
-                <ExerciseItem exercise={ex} />
+                <ExerciseItem
+                  exercise={ex}
+                  rightSlot={
+                    <button
+                      onClick={(e) => { e.stopPropagation(); setEditingExercise(ex); }}
+                      style={{ color: "var(--muted)", minHeight: "auto", padding: "4px 6px", fontSize: "14px" }}
+                    >
+                      ✎
+                    </button>
+                  }
+                />
                 {filtered.variationsByParent[ex.id]?.map((v) => (
-                  <ExerciseItem key={v.id} exercise={v} isVariation />
+                  <ExerciseItem
+                    key={v.id}
+                    exercise={v}
+                    isVariation
+                    rightSlot={
+                      <button
+                        onClick={(e) => { e.stopPropagation(); setEditingExercise(v); }}
+                        style={{ color: "var(--muted)", minHeight: "auto", padding: "4px 6px", fontSize: "14px" }}
+                      >
+                        ✎
+                      </button>
+                    }
+                  />
                 ))}
               </div>
             ))}
@@ -197,6 +221,17 @@ export default function BibliotecaPage() {
             loadExercises();
           }}
           existingExercises={exercises.filter((e) => !e.parent_exercise_id)}
+        />
+      )}
+
+      {editingExercise && (
+        <EditExerciseModal
+          exercise={editingExercise}
+          onClose={() => setEditingExercise(null)}
+          onSaved={(updated) => {
+            setExercises((prev) => prev.map((e) => (e.id === updated.id ? updated : e)));
+            setEditingExercise(null);
+          }}
         />
       )}
     </div>

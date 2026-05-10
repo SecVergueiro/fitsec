@@ -13,6 +13,7 @@ export default function MesocicloPage() {
   const confirm = useConfirm();
   const [meso, setMeso] = useState<(Mesocycle & { template_name?: string }) | null>(null);
   const [sessions, setSessions] = useState<WorkoutSession[]>([]);
+  const [pastMesos, setPastMesos] = useState<Array<Mesocycle & { template_name?: string; sessions_count: number }>>([]);
   const [loading, setLoading] = useState(true);
 
   useEffect(() => {
@@ -40,6 +41,28 @@ export default function MesocicloPage() {
         .order("session_date", { ascending: true });
       setSessions((sessRes as WorkoutSession[]) ?? []);
     }
+
+    // Mesociclos encerrados
+    const { data: pastData } = await supabase
+      .from("mesocycles")
+      .select("*, templates(name)")
+      .eq("is_active", false)
+      .not("end_date", "is", null)
+      .order("end_date", { ascending: false })
+      .limit(10);
+
+    if (pastData && pastData.length > 0) {
+      const ids = (pastData as any[]).map((m) => m.id);
+      const { data: sc } = await supabase
+        .from("workout_sessions")
+        .select("mesocycle_id")
+        .in("mesocycle_id", ids)
+        .not("completed_at", "is", null);
+      const countMap: Record<string, number> = {};
+      (sc ?? []).forEach((s: any) => { countMap[s.mesocycle_id] = (countMap[s.mesocycle_id] ?? 0) + 1; });
+      setPastMesos((pastData as any[]).map((m) => ({ ...m, template_name: m.templates?.name, sessions_count: countMap[m.id] ?? 0 })));
+    }
+
     setLoading(false);
   }
 
@@ -77,6 +100,35 @@ export default function MesocicloPage() {
         <Link href="/treinos/mesociclo/novo">
           <Button fullWidth>Iniciar mesociclo</Button>
         </Link>
+
+        {pastMesos.length > 0 && (
+          <>
+            <Eyebrow className="mt-8 mb-2">Histórico de blocos</Eyebrow>
+            <Card className="!p-0 mb-5">
+              {pastMesos.map((pm, idx) => (
+                <div
+                  key={pm.id}
+                  className="px-4 py-3 flex justify-between items-center"
+                  style={{ borderBottom: idx < pastMesos.length - 1 ? "0.5px solid var(--border)" : "none" }}
+                >
+                  <div>
+                    <div className="text-sm font-bold">{pm.name}</div>
+                    <div className="text-xs mt-0.5" style={{ color: "var(--muted)" }}>
+                      {pm.template_name && `${pm.template_name} · `}
+                      {pm.end_date ? new Date(pm.end_date).toLocaleDateString("pt-BR") : "—"}
+                    </div>
+                  </div>
+                  <div className="text-right">
+                    <div className="text-sm font-bold tabular" style={{ color: "var(--accent)" }}>
+                      {pm.sessions_count}
+                    </div>
+                    <div className="text-xs" style={{ color: "var(--muted)" }}>sessões</div>
+                  </div>
+                </div>
+              ))}
+            </Card>
+          </>
+        )}
       </div>
     );
   }
@@ -202,6 +254,35 @@ export default function MesocicloPage() {
       <button onClick={endMeso} className="text-xs mt-6 block mx-auto" style={{ color: "#ff8888", minHeight: "auto" }}>
         Encerrar mesociclo
       </button>
+
+      {pastMesos.length > 0 && (
+        <>
+          <Eyebrow className="mt-8 mb-2">Histórico de blocos</Eyebrow>
+          <Card className="!p-0 mb-5">
+            {pastMesos.map((pm, idx) => (
+              <div
+                key={pm.id}
+                className="px-4 py-3 flex justify-between items-center"
+                style={{ borderBottom: idx < pastMesos.length - 1 ? "0.5px solid var(--border)" : "none" }}
+              >
+                <div>
+                  <div className="text-sm font-bold">{pm.name}</div>
+                  <div className="text-xs mt-0.5" style={{ color: "var(--muted)" }}>
+                    {pm.template_name && `${pm.template_name} · `}
+                    {pm.end_date ? new Date(pm.end_date).toLocaleDateString("pt-BR") : "—"}
+                  </div>
+                </div>
+                <div className="text-right">
+                  <div className="text-sm font-bold tabular" style={{ color: "var(--accent)" }}>
+                    {pm.sessions_count}
+                  </div>
+                  <div className="text-xs" style={{ color: "var(--muted)" }}>sessões</div>
+                </div>
+              </div>
+            ))}
+          </Card>
+        </>
+      )}
     </div>
   );
 }
