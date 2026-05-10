@@ -423,7 +423,7 @@ function EditSessionModal({
       onClick={(e) => { if (e.target === e.currentTarget) onClose(); }}
     >
       <div
-        className="w-full max-w-md rounded-t-2xl p-5 fade-in"
+        className="w-full max-w-md rounded-t-2xl p-5 slide-up"
         style={{ background: "var(--background)", border: "0.5px solid var(--border-strong)", paddingBottom: "calc(1.25rem + env(safe-area-inset-bottom))" }}
       >
         <div className="flex justify-between items-center mb-4">

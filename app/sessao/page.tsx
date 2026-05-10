@@ -361,7 +361,7 @@ function CheckinModal({
       style={{ background: "rgba(0,0,0,0.72)", backdropFilter: "blur(8px)" }}
     >
       <div
-        className="w-full max-w-lg rounded-t-2xl p-6 pb-12 fade-in"
+        className="w-full max-w-lg rounded-t-2xl p-6 pb-12 slide-up"
         style={{ background: "var(--background)", border: "0.5px solid var(--border-strong)", borderBottom: "none" }}
       >
         <div className="text-center mb-6">

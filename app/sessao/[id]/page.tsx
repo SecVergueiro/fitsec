@@ -1312,7 +1312,7 @@ function SessionInfoModal({
   return (
     <div className="fixed inset-0 z-50 flex items-end justify-center" style={{ background: "rgba(0,0,0,0.6)", backdropFilter: "blur(8px)" }}
       onClick={(e) => { if (e.target === e.currentTarget) onClose(); }}>
-      <div className="w-full max-w-md rounded-t-2xl p-5 fade-in"
+      <div className="w-full max-w-md rounded-t-2xl p-5 slide-up"
         style={{ background: "var(--background)", border: "0.5px solid var(--border-strong)", paddingBottom: "calc(1.25rem + env(safe-area-inset-bottom))" }}>
         <div className="flex justify-between items-center mb-4">
           <h2 className="text-base font-bold">Dados da sessão</h2>
@@ -1378,7 +1378,7 @@ function FinishSessionModal({
     >
       <div
         onClick={(e) => e.stopPropagation()}
-        className="w-full max-w-md rounded-t-2xl sm:rounded-2xl p-5 fade-in"
+        className="w-full max-w-md rounded-t-2xl sm:rounded-2xl p-5 slide-up"
         style={{
           background: "var(--background)",
           border: "0.5px solid var(--border-strong)",

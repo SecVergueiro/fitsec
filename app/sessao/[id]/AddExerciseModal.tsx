@@ -68,7 +68,7 @@ export function AddExerciseToSessionModal({
     >
       <div
         onClick={(e) => e.stopPropagation()}
-        className="w-full max-w-md rounded-t-2xl sm:rounded-2xl p-5 fade-in"
+        className="w-full max-w-md rounded-t-2xl sm:rounded-2xl p-5 slide-up"
         style={{
           background: "var(--background)",
           border: "0.5px solid var(--border-strong)",
