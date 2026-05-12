@@ -3,6 +3,7 @@
 import { useState } from "react";
 import { supabase } from "@/lib/supabase";
 import { Card, Eyebrow } from "@/components/ui";
+import { Select } from "@/components/Select";
 import { MUSCLE_LABELS, EQUIPMENT_LABELS } from "@/lib/utils";
 import type { Exercise, MuscleGroup, Equipment, Category } from "@/lib/database.types";
 
@@ -16,6 +17,7 @@ const MUSCLES: MuscleGroup[] = [
   "peito",
   "costas",
   "ombro",
+  "ombro_anterior",
   "ombro_posterior",
   "biceps",
   "triceps",
@@ -25,9 +27,13 @@ const MUSCLES: MuscleGroup[] = [
   "gluteo",
   "panturrilha",
   "core",
+  "lombar",
 ];
 
 const EQUIPMENTS: Equipment[] = ["barra", "halter", "maquina", "cabo", "peso_corporal", "smith"];
+
+const MUSCLE_OPTIONS = MUSCLES.map((m) => ({ value: m, label: MUSCLE_LABELS[m] }));
+const EQUIPMENT_OPTIONS = EQUIPMENTS.map((e) => ({ value: e, label: EQUIPMENT_LABELS[e] }));
 
 export function NewExerciseModal({ onClose, onCreated, existingExercises }: Props) {
   const [name, setName] = useState("");
@@ -119,32 +125,20 @@ export function NewExerciseModal({ onClose, onCreated, existingExercises }: Prop
 
           <div className="grid grid-cols-2 gap-2">
             <Field label="Músculo">
-              <select
+              <Select
                 value={primaryMuscle}
-                onChange={(e) => setPrimaryMuscle(e.target.value as MuscleGroup)}
-                style={inputStyle}
-                className="w-full"
-              >
-                {MUSCLES.map((m) => (
-                  <option key={m} value={m}>
-                    {MUSCLE_LABELS[m]}
-                  </option>
-                ))}
-              </select>
+                options={MUSCLE_OPTIONS}
+                onChange={(v) => setPrimaryMuscle(v as MuscleGroup)}
+                title="Grupo muscular"
+              />
             </Field>
             <Field label="Equipamento">
-              <select
+              <Select
                 value={equipment}
-                onChange={(e) => setEquipment(e.target.value as Equipment)}
-                style={inputStyle}
-                className="w-full"
-              >
-                {EQUIPMENTS.map((eq) => (
-                  <option key={eq} value={eq}>
-                    {EQUIPMENT_LABELS[eq]}
-                  </option>
-                ))}
-              </select>
+                options={EQUIPMENT_OPTIONS}
+                onChange={(v) => setEquipment(v as Equipment)}
+                title="Equipamento"
+              />
             </Field>
           </div>
 
@@ -169,21 +163,17 @@ export function NewExerciseModal({ onClose, onCreated, existingExercises }: Prop
           </Field>
 
           <Field label="É uma variação? (opcional)">
-            <select
+            <Select
               value={parentId}
-              onChange={(e) => setParentId(e.target.value)}
-              style={inputStyle}
-              className="w-full"
-            >
-              <option value="">Não, é exercício novo</option>
-              {existingExercises
-                .filter((e) => e.primary_muscle === primaryMuscle)
-                .map((e) => (
-                  <option key={e.id} value={e.id}>
-                    Variação de: {e.name}
-                  </option>
-                ))}
-            </select>
+              options={[
+                { value: "", label: "Não, é exercício novo" },
+                ...existingExercises
+                  .filter((e) => e.primary_muscle === primaryMuscle)
+                  .map((e) => ({ value: e.id, label: `Variação de: ${e.name}` })),
+              ]}
+              onChange={(v) => setParentId(v)}
+              title="Selecione exercício pai"
+            />
           </Field>
 
           {parentId && (

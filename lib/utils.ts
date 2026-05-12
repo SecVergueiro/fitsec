@@ -64,7 +64,7 @@ export const MUSCLE_LABELS: Record<string, string> = {
   posterior: "Posterior",
   gluteo: "Glúteo",
   panturrilha: "Panturrilha",
-  core: "Core",
+  core: "Abdômen",
   lombar: "Lombar",
 };
 
