@@ -6,6 +6,7 @@ import { Input, Button } from "@/components/Button";
 import { ExerciseItem } from "@/components/ExerciseItem";
 import { MUSCLE_LABELS } from "@/lib/utils";
 import type { Exercise } from "@/lib/database.types";
+import { NewExerciseModal } from "@/app/biblioteca/NewExerciseModal";
 
 const MUSCLE_FILTER_KEYS = [
   "peito", "costas", "ombro", "quadriceps", "posterior",
@@ -27,13 +28,15 @@ export function AddExerciseToSessionModal({
   const [search, setSearch] = useState("");
   const [muscleFilter, setMuscleFilter] = useState<string | null>(null);
   const [adding, setAdding] = useState(false);
+  const [showNewExercise, setShowNewExercise] = useState(false);
+
+  async function loadExercises() {
+    const { data } = await supabase.from("exercises").select("*").order("name");
+    setExercises((data as Exercise[]) ?? []);
+  }
 
   useEffect(() => {
-    supabase
-      .from("exercises")
-      .select("*")
-      .order("name")
-      .then(({ data }) => setExercises((data as Exercise[]) ?? []));
+    loadExercises();
   }, []);
 
   const filtered = exercises.filter((e) => {
@@ -127,18 +130,45 @@ export function AddExerciseToSessionModal({
           </div>
         </div>
 
-        {/* Count */}
-        <div className="flex-shrink-0 mb-1.5">
+        {/* Count + criar novo */}
+        <div className="flex-shrink-0 mb-2 flex items-center justify-between">
           <span className="text-xs" style={{ color: "var(--faint)" }}>
             {filtered.length} exercício{filtered.length !== 1 ? "s" : ""}
           </span>
+          <button
+            onClick={() => setShowNewExercise(true)}
+            className="rounded-full text-xs font-bold flex items-center gap-1"
+            style={{
+              padding: "5px 12px",
+              minHeight: "auto",
+              background: "rgba(152, 181, 210, 0.1)",
+              color: "var(--primary)",
+              border: "1px dashed var(--primary)",
+              cursor: "pointer",
+            }}
+          >
+            <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="3" strokeLinecap="round">
+              <line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/>
+            </svg>
+            Criar novo
+          </button>
         </div>
 
         {/* Exercise list */}
         <div className="overflow-auto flex-1 -mx-1">
           {filtered.length === 0 ? (
-            <div className="text-center py-8 text-sm" style={{ color: "var(--muted)" }}>
-              Nenhum exercício encontrado
+            <div className="text-center py-8" style={{ color: "var(--muted)" }}>
+              <div className="text-sm mb-3">Nenhum exercício encontrado</div>
+              <button
+                onClick={() => setShowNewExercise(true)}
+                className="rounded-lg font-bold text-sm"
+                style={{
+                  padding: "10px 18px", minHeight: 44, cursor: "pointer",
+                  background: "var(--primary)", color: "var(--background)",
+                }}
+              >
+                + Criar &quot;{search.trim() || "novo exercício"}&quot;
+              </button>
             </div>
           ) : (
             filtered.map((ex) => (
@@ -154,6 +184,23 @@ export function AddExerciseToSessionModal({
           )}
         </div>
       </div>
+
+      {showNewExercise && (
+        <NewExerciseModal
+          existingExercises={exercises.filter((e) => !e.parent_exercise_id)}
+          onClose={() => setShowNewExercise(false)}
+          onCreated={async () => {
+            setShowNewExercise(false);
+            // Recarrega lista e pega o mais recente (acabou de criar)
+            const { data } = await supabase
+              .from("exercises").select("*").order("created_at", { ascending: false }).limit(1).maybeSingle();
+            await loadExercises();
+            if (data) {
+              await add(data as Exercise);
+            }
+          }}
+        />
+      )}
     </div>
   );
 }

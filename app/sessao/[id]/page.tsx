@@ -35,6 +35,8 @@ export default function SessaoAtivaPage() {
   const [loading, setLoading] = useState(true);
   const [activeIdx, setActiveIdx] = useState(0);
   const [elapsed, setElapsed] = useState(0);
+  const [isPaused, setIsPaused] = useState(false);
+  const [restEndAt, setRestEndAt] = useState<number | null>(null); // timestamp absoluto
   const [restRemaining, setRestRemaining] = useState<number | null>(null);
   const [restTotal, setRestTotal] = useState<number>(0);
   const [showAddExercise, setShowAddExercise] = useState(false);
@@ -52,18 +54,48 @@ export default function SessaoAtivaPage() {
     };
   }, [sessionId]);
 
+  // Tempo total — detecta inatividade. Cada gap entre atividades é
+  // limitado a INACTIVITY_CAP_S; se passar disso, marca como Pausado.
   useEffect(() => {
     if (elapsedRef.current) clearInterval(elapsedRef.current);
     if (!session?.started_at || session.completed_at) return;
-    const start = new Date(session.started_at).getTime();
-    setElapsed(Math.floor((Date.now() - start) / 1000));
-    elapsedRef.current = setInterval(() => {
-      setElapsed(Math.floor((Date.now() - start) / 1000));
-    }, 1000);
+
+    const INACTIVITY_CAP_S = 5 * 60; // 5 minutos
+    const startMs = new Date(session.started_at).getTime();
+
+    function compute() {
+      const activities = [
+        startMs,
+        ...exercises.flatMap((e) => e.sets.map((s) => new Date(s.performed_at).getTime())),
+      ].sort((a, b) => a - b);
+
+      let active = 0;
+      for (let i = 1; i < activities.length; i++) {
+        active += Math.min((activities[i] - activities[i - 1]) / 1000, INACTIVITY_CAP_S);
+      }
+      // Gap entre última atividade e agora
+      const lastActivity = activities[activities.length - 1];
+      const sinceLast = (Date.now() - lastActivity) / 1000;
+      const paused = sinceLast > INACTIVITY_CAP_S;
+      const tailGap = paused ? INACTIVITY_CAP_S : sinceLast;
+      active += tailGap;
+
+      setElapsed(Math.floor(active));
+      setIsPaused(paused);
+    }
+
+    compute();
+    elapsedRef.current = setInterval(compute, 1000);
+
+    // Recalcula quando o app volta do background
+    function onVisible() { if (!document.hidden) compute(); }
+    document.addEventListener("visibilitychange", onVisible);
+
     return () => {
       if (elapsedRef.current) clearInterval(elapsedRef.current);
+      document.removeEventListener("visibilitychange", onVisible);
     };
-  }, [session?.started_at, session?.completed_at]);
+  }, [session?.started_at, session?.completed_at, exercises]);
 
   async function load() {
     setLoading(true);
@@ -390,19 +422,46 @@ export default function SessaoAtivaPage() {
 
   function startRestTimer(seconds: number) {
     if (restRef.current) clearInterval(restRef.current);
-    setRestRemaining(seconds);
+    // Timestamp absoluto — funciona mesmo com tela apagada / app em background
+    const endAt = Date.now() + seconds * 1000;
+    setRestEndAt(endAt);
     setRestTotal(seconds);
-    restRef.current = setInterval(() => {
-      setRestRemaining((prev) => {
-        if (prev === null || prev <= 1) {
-          if (restRef.current) clearInterval(restRef.current);
-          if ("vibrate" in navigator) navigator.vibrate([200, 100, 200]);
-          return null;
-        }
-        return prev - 1;
-      });
-    }, 1000);
+    setRestRemaining(seconds);
   }
+
+  // Tick do rest timer baseado em endAt
+  useEffect(() => {
+    if (restRef.current) clearInterval(restRef.current);
+    if (restEndAt == null) return;
+
+    let alerted = false;
+    function tick() {
+      if (restEndAt == null) return;
+      const remaining = Math.ceil((restEndAt - Date.now()) / 1000);
+      if (remaining <= 0) {
+        if (restRef.current) clearInterval(restRef.current);
+        if (!alerted) {
+          alerted = true;
+          if ("vibrate" in navigator) navigator.vibrate([200, 100, 200]);
+        }
+        setRestRemaining(null);
+        setRestEndAt(null);
+        return;
+      }
+      setRestRemaining(remaining);
+    }
+
+    tick();
+    restRef.current = setInterval(tick, 500);
+
+    function onVisible() { if (!document.hidden) tick(); }
+    document.addEventListener("visibilitychange", onVisible);
+
+    return () => {
+      if (restRef.current) clearInterval(restRef.current);
+      document.removeEventListener("visibilitychange", onVisible);
+    };
+  }, [restEndAt]);
 
   async function handleFinish(energyLevel: number | null, sessionNotes: string, bodyweightKg: number | null) {
     setShowFinishModal(false);
@@ -509,10 +568,30 @@ export default function SessaoAtivaPage() {
               </button>
             )}
           </div>
-          <div className="flex items-center gap-3">
+          <div className="flex items-center gap-2">
+            {!isCompleted && isPaused && (
+              <span
+                className="text-xs font-bold flex items-center gap-1"
+                style={{
+                  color: "#fbbf24",
+                  padding: "2px 6px",
+                  background: "rgba(251, 191, 36, 0.12)",
+                  borderRadius: 4,
+                  fontSize: 9,
+                  letterSpacing: "0.08em",
+                  textTransform: "uppercase",
+                }}
+                title="Sem atividade há mais de 5 min. O cronômetro pausou."
+              >
+                <svg width="8" height="8" viewBox="0 0 24 24" fill="currentColor">
+                  <rect x="6" y="4" width="4" height="16"/><rect x="14" y="4" width="4" height="16"/>
+                </svg>
+                Pausado
+              </span>
+            )}
             <div
               className="text-sm font-bold tabular"
-              style={{ color: isCompleted ? "var(--muted)" : "var(--accent)" }}
+              style={{ color: isCompleted ? "var(--muted)" : isPaused ? "var(--muted)" : "var(--accent)" }}
             >
               {fmtTimer(elapsed)}
             </div>
@@ -564,7 +643,7 @@ export default function SessaoAtivaPage() {
                 {fmtTimer(restRemaining)}
               </span>
               <button
-                onClick={() => setRestRemaining(null)}
+                onClick={() => { setRestRemaining(null); setRestEndAt(null); }}
                 className="text-xs font-medium flex-shrink-0 px-2.5 py-1.5 rounded-md"
                 style={{
                   background: "rgba(68, 147, 224, 0.10)",
