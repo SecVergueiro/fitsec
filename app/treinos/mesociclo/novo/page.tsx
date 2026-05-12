@@ -6,6 +6,7 @@ import Link from "next/link";
 import { supabase } from "@/lib/supabase";
 import { Card, Eyebrow, PageHeader } from "@/components/ui";
 import { Button, Input } from "@/components/Button";
+import { Select } from "@/components/Select";
 import type { Template } from "@/lib/database.types";
 
 export default function NovoMesociclo() {
@@ -96,24 +97,13 @@ export default function NovoMesociclo() {
             <label className="text-xs font-medium block mb-1.5" style={{ color: "var(--muted)" }}>
               Template
             </label>
-            <select
+            <Select
               value={templateId}
-              onChange={(e) => setTemplateId(e.target.value)}
-              className="w-full rounded-lg px-3 py-2.5 text-sm"
-              style={{
-                background: "var(--surface)",
-                border: "0.5px solid var(--border)",
-                color: "var(--text)",
-                outline: "none",
-                minHeight: "44px",
-              }}
-            >
-              {templates.map((t) => (
-                <option key={t.id} value={t.id}>
-                  {t.name}
-                </option>
-              ))}
-            </select>
+              options={templates.map((t) => ({ value: t.id, label: t.name }))}
+              onChange={setTemplateId}
+              title="Escolher template"
+              placeholder="Selecionar template..."
+            />
           </div>
 
           <div>

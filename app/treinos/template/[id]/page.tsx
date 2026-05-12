@@ -6,6 +6,7 @@ import { useParams, useRouter } from "next/navigation";
 import { supabase } from "@/lib/supabase";
 import { Card, Eyebrow, PageHeader, Pill } from "@/components/ui";
 import { Button, EmptyState, Input, Spinner } from "@/components/Button";
+import { Select } from "@/components/Select";
 import { useConfirm, useToast } from "@/components/Toast";
 import { WEEKDAY_LABELS } from "@/lib/utils";
 import type { Template, TemplateDay } from "@/lib/database.types";
@@ -205,25 +206,12 @@ export default function TemplateDetailPage() {
         <Card className="mb-3">
           <div className="space-y-2">
             <Input value={newDayName} onChange={setNewDayName} placeholder="Nome do dia (Upper, Push...)" autoFocus />
-            <select
-              value={newDayWeekday}
-              onChange={(e) => setNewDayWeekday(Number(e.target.value))}
-              className="w-full rounded-lg px-3 py-2.5 text-sm"
-              style={{
-                background: "var(--surface)",
-                border: "0.5px solid var(--border)",
-                color: "var(--text)",
-                outline: "none",
-                minHeight: "44px",
-              }}
-            >
-              <option value="">Sem dia fixo</option>
-              {WEEKDAY_LABELS.map((label, idx) => (
-                <option key={idx} value={idx}>
-                  {label}
-                </option>
-              ))}
-            </select>
+            <Select
+              value={String(newDayWeekday)}
+              options={WEEKDAY_LABELS.map((label, idx) => ({ value: String(idx), label }))}
+              onChange={(v) => setNewDayWeekday(Number(v))}
+              title="Dia da semana"
+            />
             <div className="flex gap-2">
               <Button onClick={addDay} fullWidth>
                 Adicionar
