@@ -31,6 +31,16 @@ export default function ResumoPage() {
   const [loading, setLoading] = useState(true);
   const [showEditModal, setShowEditModal] = useState(false);
   const [prevVolume, setPrevVolume] = useState<{ tonnage: number; sets: number; dayName: string } | null>(null);
+  const [editingName, setEditingName] = useState(false);
+  const [nameInput, setNameInput] = useState("");
+  const [dayName, setDayName] = useState<string | null>(null);
+
+  async function saveName() {
+    const trimmed = nameInput.trim();
+    await supabase.from("workout_sessions").update({ custom_name: trimmed || null } as any).eq("id", sessionId);
+    setSession((s) => s ? { ...s, custom_name: trimmed || null } : s);
+    setEditingName(false);
+  }
 
   async function handleShare() {
     // Marca a sessão como pública antes de compartilhar
@@ -150,6 +160,13 @@ export default function ResumoPage() {
     ]);
 
     setSession(sessionRes.data as WorkoutSession);
+
+    // Carrega nome do template_day se houver
+    const tdId = (sessionRes.data as any)?.template_day_id;
+    if (tdId) {
+      const { data: td } = await supabase.from("template_days").select("name").eq("id", tdId).maybeSingle();
+      setDayName((td as any)?.name ?? null);
+    }
 
     const exList = (exRes.data as any[]) ?? [];
     const allSets = (setsRes.data as SessionSet[]) ?? [];
@@ -282,12 +299,51 @@ export default function ResumoPage() {
         >
           <CheckIcon />
         </div>
-        <h1
-          className="text-3xl mb-1.5"
-          style={{ fontFamily: "'Barlow Condensed', sans-serif", fontWeight: 800, letterSpacing: "0.01em" }}
-        >
-          Treino concluído
-        </h1>
+        {editingName ? (
+          <div className="flex items-center justify-center gap-2 mb-1.5">
+            <input
+              value={nameInput}
+              onChange={(e) => setNameInput(e.target.value)}
+              onKeyDown={(e) => { if (e.key === "Enter") saveName(); if (e.key === "Escape") setEditingName(false); }}
+              autoFocus
+              placeholder="Nome do treino"
+              className="text-2xl text-center font-bold rounded-lg px-3 py-1"
+              style={{
+                fontFamily: "'Barlow Condensed', sans-serif",
+                background: "var(--surface)",
+                border: "1px solid var(--accent)",
+                color: "var(--text)",
+                outline: "none",
+                maxWidth: "80%",
+              }}
+            />
+            <button onClick={saveName} aria-label="Salvar"
+              className="rounded-lg flex items-center justify-center"
+              style={{ width: 36, height: 36, minHeight: 36, background: "var(--accent)", color: "var(--background)", cursor: "pointer" }}>
+              <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="3" strokeLinecap="round" strokeLinejoin="round">
+                <polyline points="20 6 9 17 4 12"/>
+              </svg>
+            </button>
+          </div>
+        ) : (
+          <button
+            onClick={() => { setNameInput(session.custom_name ?? dayName ?? ""); setEditingName(true); }}
+            className="inline-flex items-center gap-2 mb-1.5"
+            style={{ minHeight: "auto", padding: "4px 8px", background: "transparent", border: "none", cursor: "pointer" }}
+            aria-label="Editar nome do treino"
+          >
+            <h1
+              className="text-3xl"
+              style={{ fontFamily: "'Barlow Condensed', sans-serif", fontWeight: 800, letterSpacing: "0.01em" }}
+            >
+              {session.custom_name || dayName || "Treino livre"}
+            </h1>
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" style={{ color: "var(--faint)" }}>
+              <path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7"/>
+              <path d="M18.5 2.5a2.121 2.121 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z"/>
+            </svg>
+          </button>
+        )}
         <p className="text-sm" style={{ color: "var(--muted)" }}>
           {new Date(session.session_date + "T12:00:00").toLocaleDateString("pt-BR", {
             weekday: "long",

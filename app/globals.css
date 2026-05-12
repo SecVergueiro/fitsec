@@ -142,6 +142,23 @@ button, a[role="button"] {
   animation: shimmer 2.5s linear infinite;
 }
 
+/* Pressed state — feedback de toque nos cards ativos */
+.tap-feedback {
+  transition: transform 0.12s cubic-bezier(0.4, 0, 0.2, 1), background 0.15s ease;
+}
+.tap-feedback:active {
+  transform: scale(0.98);
+}
+
+/* Glow sutil no card ativo da sessão */
+@keyframes activeGlow {
+  0%, 100% { box-shadow: 0 0 0 0 rgba(68, 147, 224, 0); }
+  50%      { box-shadow: 0 0 16px 0 rgba(68, 147, 224, 0.18); }
+}
+.active-glow {
+  animation: activeGlow 3s ease-in-out infinite;
+}
+
 /* Respeita a preferência de reduced motion do usuário */
 @media (prefers-reduced-motion: reduce) {
   *,

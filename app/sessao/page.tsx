@@ -359,7 +359,7 @@ export default function SessaoIndex() {
               <Card className="!p-3 mb-2">
                 <div className="flex justify-between items-center">
                   <div>
-                    <div className="font-medium text-sm">{s.day_name ?? "Treino livre"}</div>
+                    <div className="font-medium text-sm">{(s as any).custom_name || s.day_name || "Treino livre"}</div>
                     <div className="text-xs mt-0.5" style={{ color: "var(--muted)" }}>
                       {new Date(s.session_date + "T12:00:00").toLocaleDateString("pt-BR", {
                         weekday: "short",

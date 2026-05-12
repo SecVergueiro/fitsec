@@ -306,6 +306,22 @@ export default function SessaoAtivaPage() {
     return true;
   }
 
+  async function toggleSetFlag(exIdx: number, setId: string, flag: "is_warmup" | "is_failure") {
+    const ex = exercises[exIdx];
+    const set = ex.sets.find((s) => s.id === setId);
+    if (!set) return;
+    const newVal = !(set as any)[flag];
+    await offlineUpdate("session_sets", { [flag]: newVal }, { id: setId }, { localTable: "session_sets", localId: setId });
+    setExercises((prev) => {
+      const next = [...prev];
+      next[exIdx] = {
+        ...next[exIdx],
+        sets: next[exIdx].sets.map((s) => (s.id === setId ? { ...s, [flag]: newVal } : s)),
+      };
+      return next;
+    });
+  }
+
   async function editSet(exIdx: number, setId: string, weight: number, reps: number, rir: number | null) {
     try {
       await offlineUpdate("session_sets", { weight_kg: weight, reps, rir }, { id: setId }, { localTable: "session_sets", localId: setId });
@@ -615,6 +631,7 @@ export default function SessaoAtivaPage() {
                 onAddSet={(weight, reps, rir, isWarmup, isFailure) => addSet(idx, weight, reps, rir, isWarmup, isFailure)}
                 onEditSet={(setId, weight, reps, rir) => editSet(idx, setId, weight, reps, rir)}
                 onDeleteSet={(setId) => deleteSet(idx, setId)}
+                onToggleSetFlag={(setId, flag) => toggleSetFlag(idx, setId, flag)}
                 onToggleCompleted={() => toggleCompleted(idx)}
                 supersetWithPrev={ex.superset_group != null && idx > 0 && exercises[idx - 1].superset_group === ex.superset_group}
                 supersetWithNext={ex.superset_group != null && idx < exercises.length - 1 && exercises[idx + 1].superset_group === ex.superset_group}
@@ -636,6 +653,7 @@ export default function SessaoAtivaPage() {
                     onAddSet={(weight, reps, rir, isWarmup, isFailure) => addSet(idx, weight, reps, rir, isWarmup, isFailure)}
                     onEditSet={(setId, weight, reps, rir) => editSet(idx, setId, weight, reps, rir)}
                     onDeleteSet={(setId) => deleteSet(idx, setId)}
+                    onToggleSetFlag={(setId, flag) => toggleSetFlag(idx, setId, flag)}
                     onToggleCompleted={() => toggleCompleted(idx)}
                     onToggleSuperset={idx > 0 ? () => toggleSuperset(idx) : undefined}
                     supersetWithPrev={ex.superset_group != null && idx > 0 && exercises[idx - 1].superset_group === ex.superset_group}
@@ -773,6 +791,7 @@ function ExerciseCard({
   onAddSet,
   onEditSet,
   onDeleteSet,
+  onToggleSetFlag,
   onToggleCompleted,
   onToggleSuperset,
   supersetWithPrev,
@@ -789,6 +808,7 @@ function ExerciseCard({
   onAddSet: (weight: number, reps: number, rir: number | null, isWarmup: boolean, isFailure: boolean) => Promise<boolean>;
   onEditSet: (setId: string, weight: number, reps: number, rir: number | null) => void;
   onDeleteSet: (setId: string) => void;
+  onToggleSetFlag?: (setId: string, flag: "is_warmup" | "is_failure") => void;
   onToggleCompleted: () => void;
   onToggleSuperset?: () => void;
   supersetWithPrev?: boolean;
@@ -943,22 +963,22 @@ function ExerciseCard({
   return (
     <div
       onClick={!isActive && !isReadOnly ? onActivate : undefined}
-      className="overflow-hidden"
+      className={`overflow-hidden tap-feedback ${isActive && !isCompleted ? "active-glow" : ""}`}
       style={{
         background: isActive ? "var(--surface-strong)" : "var(--surface)",
-        borderTop: supersetWithPrev ? "none" : (isActive ? "0.5px solid var(--border-strong)" : "0.5px solid var(--border)"),
-        borderRight: isActive ? "0.5px solid var(--border-strong)" : "0.5px solid var(--border)",
-        borderBottom: supersetWithNext ? "none" : (isActive ? "0.5px solid var(--border-strong)" : "0.5px solid var(--border)"),
-        borderLeft: `3px solid ${inSuperset ? "#a78bfa" : isActive ? muscleColor : `${muscleColor}44`}`,
-        borderTopLeftRadius: supersetWithPrev ? 0 : 12,
-        borderTopRightRadius: supersetWithPrev ? 0 : 12,
-        borderBottomLeftRadius: supersetWithNext ? 0 : 12,
-        borderBottomRightRadius: supersetWithNext ? 0 : 12,
+        borderTop: supersetWithPrev ? "none" : (isActive ? "1px solid var(--border-strong)" : "0.5px solid var(--border)"),
+        borderRight: isActive ? "1px solid var(--border-strong)" : "0.5px solid var(--border)",
+        borderBottom: supersetWithNext ? "none" : (isActive ? "1px solid var(--border-strong)" : "0.5px solid var(--border)"),
+        borderLeft: `4px solid ${inSuperset ? "#a78bfa" : isActive ? muscleColor : `${muscleColor}66`}`,
+        borderTopLeftRadius: supersetWithPrev ? 0 : 14,
+        borderTopRightRadius: supersetWithPrev ? 0 : 14,
+        borderBottomLeftRadius: supersetWithNext ? 0 : 14,
+        borderBottomRightRadius: supersetWithNext ? 0 : 14,
         marginTop: supersetWithPrev ? 0 : undefined,
-        padding: "12px 14px 12px 12px",
+        padding: "14px 14px 14px 12px",
         opacity: isCompleted ? 0.65 : 1,
         cursor: !isActive && !isReadOnly ? "pointer" : "default",
-        transition: "border-color 0.2s ease, background 0.2s ease",
+        WebkitTapHighlightColor: "transparent",
         position: "relative",
       }}
     >
@@ -1204,6 +1224,8 @@ function ExerciseCard({
               setNumber={`A${i + 1}`}
               onEdit={isReadOnly ? undefined : (w, r, rir) => onEditSet(s.id, w, r, rir)}
               onDelete={isReadOnly ? undefined : () => onDeleteSet(s.id)}
+              onToggleWarmup={isReadOnly ? undefined : () => onToggleSetFlag?.(s.id, "is_warmup")}
+              onToggleFailure={isReadOnly ? undefined : () => onToggleSetFlag?.(s.id, "is_failure")}
             />
           ))}
           {realSets.map((s, i) => (
@@ -1213,6 +1235,8 @@ function ExerciseCard({
               setNumber={String(i + 1)}
               onEdit={isReadOnly ? undefined : (w, r, rir) => onEditSet(s.id, w, r, rir)}
               onDelete={isReadOnly ? undefined : () => onDeleteSet(s.id)}
+              onToggleWarmup={isReadOnly ? undefined : () => onToggleSetFlag?.(s.id, "is_warmup")}
+              onToggleFailure={isReadOnly ? undefined : () => onToggleSetFlag?.(s.id, "is_failure")}
             />
           ))}
         </div>
@@ -1943,11 +1967,15 @@ function SetRow({
   setNumber,
   onEdit,
   onDelete,
+  onToggleWarmup,
+  onToggleFailure,
 }: {
   set: SessionSet;
   setNumber: string;
   onEdit?: (weight: number, reps: number, rir: number | null) => void;
   onDelete?: () => void;
+  onToggleWarmup?: () => void;
+  onToggleFailure?: () => void;
 }) {
   const [editing, setEditing] = useState(false);
   const [w, setW] = useState(String(set.weight_kg));
@@ -1959,6 +1987,7 @@ function SetRow({
     const reps = parseInt(r);
     if (!weight || weight <= 0 || !reps || reps <= 0) return;
     onEdit?.(weight, reps, rirVal ? parseInt(rirVal) : null);
+    if ("vibrate" in navigator) navigator.vibrate(20);
     setEditing(false);
   }
 
@@ -1974,56 +2003,143 @@ function SetRow({
     border: "0.5px solid var(--border-strong)",
     color: "var(--text)",
     outline: "none",
-    minHeight: "auto",
+    minHeight: 40,
+    fontSize: 14,
   };
 
+  // Modo edição — expandido com inputs grandes + toggles
   if (editing) {
     return (
-      <div className="grid items-center py-1" style={{ gridTemplateColumns: "24px 1fr 1fr 1fr 52px", gap: "6px" }}>
-        <div className="font-bold text-xs" style={{ color: set.is_failure ? "#ef4444" : set.is_warmup ? "var(--muted)" : "var(--accent)" }}>
-          {setNumber}
+      <div
+        className="rounded-xl p-3 mb-1 scale-in"
+        style={{ background: "var(--surface-strong)", border: "1px solid var(--accent)" }}
+      >
+        <div className="flex items-center justify-between mb-2">
+          <span className="text-xs font-bold" style={{ color: "var(--accent)", letterSpacing: "0.08em", textTransform: "uppercase" }}>
+            Editando série {setNumber}
+          </span>
+          <button onClick={handleCancel} aria-label="Cancelar"
+            style={{ width: 28, height: 28, minHeight: "auto", color: "var(--muted)", cursor: "pointer", fontSize: 18, lineHeight: 1 }}>
+            ×
+          </button>
         </div>
-        <input type="number" inputMode="decimal" value={w} onChange={(e) => setW(e.target.value)}
-          step="0.5" className="text-center text-xs font-bold tabular rounded py-1.5"
-          style={numStyle} autoFocus />
-        <input type="number" inputMode="numeric" value={r} onChange={(e) => setR(e.target.value)}
-          className="text-center text-xs font-bold tabular rounded py-1.5" style={numStyle} />
-        <input type="number" inputMode="numeric" value={rirVal} onChange={(e) => setRirVal(e.target.value)}
-          placeholder="—" className="text-center text-xs tabular rounded py-1.5" style={numStyle} />
-        <div className="flex gap-1.5 justify-end">
-          <button onClick={handleSave} style={{ color: "var(--accent)", fontSize: "15px", minHeight: "auto" }}>✓</button>
-          <button onClick={handleCancel} style={{ color: "var(--muted)", fontSize: "15px", minHeight: "auto" }}>×</button>
+
+        {/* Inputs grandes */}
+        <div className="grid grid-cols-3 gap-1.5 mb-2.5">
+          <div>
+            <div className="text-xs mb-1" style={{ color: "var(--faint)", letterSpacing: "0.06em", textTransform: "uppercase" }}>kg</div>
+            <input type="number" inputMode="decimal" value={w} onChange={(e) => setW(e.target.value)}
+              step="0.5" autoFocus
+              className="w-full text-center font-bold tabular rounded-lg px-2"
+              style={numStyle} />
+          </div>
+          <div>
+            <div className="text-xs mb-1" style={{ color: "var(--faint)", letterSpacing: "0.06em", textTransform: "uppercase" }}>reps</div>
+            <input type="number" inputMode="numeric" value={r} onChange={(e) => setR(e.target.value)}
+              className="w-full text-center font-bold tabular rounded-lg px-2" style={numStyle} />
+          </div>
+          <div>
+            <div className="text-xs mb-1" style={{ color: "var(--faint)", letterSpacing: "0.06em", textTransform: "uppercase" }}>rir</div>
+            <input type="number" inputMode="numeric" value={rirVal} onChange={(e) => setRirVal(e.target.value)}
+              placeholder="—" className="w-full text-center tabular rounded-lg px-2" style={numStyle} />
+          </div>
         </div>
+
+        {/* Toggles + ações */}
+        <div className="flex gap-1.5">
+          {onToggleWarmup && (
+            <button onClick={onToggleWarmup}
+              style={{
+                fontSize: 11, fontWeight: 700, padding: "8px 12px", borderRadius: 8,
+                minHeight: 40, cursor: "pointer",
+                background: set.is_warmup ? "rgba(251,191,36,0.13)" : "transparent",
+                border: `0.5px solid ${set.is_warmup ? "rgba(251,191,36,0.55)" : "var(--border)"}`,
+                color: set.is_warmup ? "#fbbf24" : "var(--faint)",
+              }}>
+              {set.is_warmup ? "★ Aquec." : "Aquec."}
+            </button>
+          )}
+          {onToggleFailure && (
+            <button onClick={onToggleFailure}
+              style={{
+                fontSize: 11, fontWeight: 700, padding: "8px 12px", borderRadius: 8,
+                minHeight: 40, cursor: "pointer",
+                background: set.is_failure ? "rgba(239,68,68,0.13)" : "transparent",
+                border: `0.5px solid ${set.is_failure ? "rgba(239,68,68,0.55)" : "var(--border)"}`,
+                color: set.is_failure ? "#ef4444" : "var(--faint)",
+              }}>
+              {set.is_failure ? "✕ Falha" : "Falha"}
+            </button>
+          )}
+          {onDelete && (
+            <button onClick={() => { onDelete(); setEditing(false); }} aria-label="Apagar série"
+              style={{
+                fontSize: 11, fontWeight: 700, padding: "8px 12px", borderRadius: 8,
+                minHeight: 40, cursor: "pointer", marginLeft: "auto",
+                background: "rgba(239,68,68,0.08)",
+                border: "0.5px solid rgba(239,68,68,0.3)",
+                color: "#ff8888",
+                display: "flex", alignItems: "center", gap: 4,
+              }}>
+              <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
+                <polyline points="3 6 5 6 21 6"/><path d="M19 6l-2 14a2 2 0 0 1-2 2H9a2 2 0 0 1-2-2L5 6"/>
+              </svg>
+              Apagar
+            </button>
+          )}
+        </div>
+
+        <button onClick={handleSave}
+          className="w-full rounded-lg font-bold mt-2"
+          style={{
+            height: 44, background: "var(--accent)", color: "var(--background)",
+            fontSize: 13, letterSpacing: "0.06em", textTransform: "uppercase", cursor: "pointer",
+          }}>
+          Salvar
+        </button>
       </div>
     );
   }
 
+  // Modo display — row inteira é tappável pra editar
+  const tappable = !!onEdit;
   return (
-    <div className="grid items-center py-1.5 text-sm" style={{ gridTemplateColumns: "24px 1fr 1fr 1fr 52px", gap: "8px" }}>
-      <div className="font-bold text-xs" style={{ color: set.is_failure ? "#ef4444" : set.is_warmup ? "var(--muted)" : "var(--accent)" }}>
+    <button
+      onClick={tappable ? () => setEditing(true) : undefined}
+      disabled={!tappable}
+      className="w-full grid items-center text-sm rounded-lg"
+      style={{
+        gridTemplateColumns: "28px 1fr 1fr 1fr 28px",
+        gap: 8,
+        padding: "10px 8px",
+        minHeight: 44,
+        background: "transparent",
+        border: "none",
+        cursor: tappable ? "pointer" : "default",
+        textAlign: "left",
+        WebkitTapHighlightColor: "rgba(68, 147, 224, 0.15)",
+        transition: "background 0.15s ease",
+      }}
+    >
+      <div className="font-bold text-xs flex items-center gap-0.5" style={{ color: set.is_failure ? "#ef4444" : set.is_warmup ? "#fbbf24" : "var(--accent)" }}>
         {setNumber}{set.is_failure ? "!" : ""}
+        {set.is_warmup && (
+          <svg width="9" height="9" viewBox="0 0 24 24" fill="currentColor" style={{ marginLeft: 1 }}>
+            <polygon points="12 2 15.09 8.26 22 9.27 17 14.14 18.18 21.02 12 17.77 5.82 21.02 7 14.14 2 9.27 8.91 8.26 12 2"/>
+          </svg>
+        )}
       </div>
       <div className="tabular font-medium">{fmtKg(set.weight_kg)}</div>
       <div className="tabular font-medium">{set.reps}</div>
       <div className="tabular" style={{ color: "var(--muted)" }}>{set.rir ?? "—"}</div>
-      <div className="flex gap-1.5 justify-end">
-        {onEdit && (
-          <button
-            onClick={() => setEditing(true)}
-            style={{ color: "var(--faint)", minHeight: "auto", padding: "2px 3px", fontSize: "12px" }}
-          >
-            ✎
-          </button>
-        )}
-        {onDelete && (
-          <button
-            onClick={onDelete}
-            style={{ color: "var(--faint)", minHeight: "auto", padding: "2px 3px", fontSize: "13px" }}
-          >
-            ×
-          </button>
-        )}
-      </div>
-    </div>
+      {tappable && (
+        <div className="flex justify-end" style={{ color: "var(--faint)" }}>
+          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+            <path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7"/>
+            <path d="M18.5 2.5a2.121 2.121 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z"/>
+          </svg>
+        </div>
+      )}
+    </button>
   );
 }

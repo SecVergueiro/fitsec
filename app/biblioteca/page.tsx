@@ -90,7 +90,27 @@ export default function BibliotecaPage() {
 
   return (
     <div className="fade-in">
-      <PageHeader eyebrow="Biblioteca" title="Exercícios" />
+      <div className="flex items-start justify-between mb-5">
+        <PageHeader eyebrow="Biblioteca" title="Exercícios" />
+        <button
+          onClick={() => setShowNewModal(true)}
+          className="rounded-xl font-bold text-sm flex items-center gap-1.5 flex-shrink-0"
+          style={{
+            background: "var(--primary)",
+            color: "var(--background)",
+            padding: "10px 14px",
+            minHeight: 44,
+            marginTop: 8,
+            boxShadow: "0 4px 14px rgba(152, 181, 210, 0.25)",
+          }}
+        >
+          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="3" strokeLinecap="round">
+            <line x1="12" y1="5" x2="12" y2="19" />
+            <line x1="5" y1="12" x2="19" y2="12" />
+          </svg>
+          Novo
+        </button>
+      </div>
 
       {/* Busca */}
       <input
@@ -199,19 +219,49 @@ export default function BibliotecaPage() {
         </>
       )}
 
-      {/* Botao de criar novo */}
-      <Card
-        variant="ghost"
-        className="text-center cursor-pointer"
+      {/* Card destacado de criar novo */}
+      <button
         onClick={() => setShowNewModal(true)}
+        className="w-full rounded-xl text-center cursor-pointer mb-6 tap-feedback"
+        style={{
+          border: "1px dashed var(--primary)",
+          background: "rgba(152, 181, 210, 0.05)",
+          padding: 16,
+        }}
       >
-        <div className="font-bold" style={{ color: "var(--primary)" }}>
-          + Criar novo exercício
+        <div className="flex items-center justify-center gap-2 font-bold" style={{ color: "var(--primary)" }}>
+          <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round">
+            <line x1="12" y1="5" x2="12" y2="19" />
+            <line x1="5" y1="12" x2="19" y2="12" />
+          </svg>
+          Criar novo exercício
         </div>
         <div className="text-xs mt-1" style={{ color: "var(--muted)" }}>
-          ou variação a partir de um existente
+          ou variação de um existente
         </div>
-      </Card>
+      </button>
+
+      {/* FAB flutuante — sempre acessível */}
+      <button
+        onClick={() => setShowNewModal(true)}
+        aria-label="Criar novo exercício"
+        className="fixed z-30 flex items-center justify-center rounded-full"
+        style={{
+          bottom: "calc(env(safe-area-inset-bottom, 0px) + 86px)",
+          right: 20,
+          width: 56,
+          height: 56,
+          background: "var(--primary)",
+          color: "var(--background)",
+          boxShadow: "0 6px 24px rgba(0,0,0,0.5), 0 0 0 1px rgba(152, 181, 210, 0.3)",
+          cursor: "pointer",
+        }}
+      >
+        <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="3" strokeLinecap="round">
+          <line x1="12" y1="5" x2="12" y2="19" />
+          <line x1="5" y1="12" x2="19" y2="12" />
+        </svg>
+      </button>
 
       {showNewModal && (
         <NewExerciseModal

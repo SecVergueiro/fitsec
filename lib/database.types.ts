@@ -102,6 +102,7 @@ export interface WorkoutSession {
   bodyweight_kg: number | null;
   energy_level: number | null;
   notes: string | null;
+  custom_name: string | null;
   created_at: string;
 }
 
