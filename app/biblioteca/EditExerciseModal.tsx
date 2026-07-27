@@ -1,7 +1,7 @@
 "use client";
 
 import { useState } from "react";
-import { supabase } from "@/lib/supabase";
+import { offlineUpdate, offlineDelete, describeWriteError } from "@/lib/offline-writes";
 import { Button, Spinner } from "@/components/Button";
 import { MUSCLE_LABELS } from "@/lib/utils";
 import type { Exercise, MuscleGroup, Equipment, Category } from "@/lib/database.types";
@@ -41,27 +41,37 @@ export function EditExerciseModal({ exercise, onClose, onSaved }: Props) {
     if (!name.trim()) { setError("Nome obrigatório"); return; }
     setSaving(true);
     setError(null);
-    const { data, error: err } = await supabase
-      .from("exercises")
-      .update({
-        name: name.trim(),
-        primary_muscle: muscle,
-        equipment: equipment ?? null,
-        category,
-        notes: notes.trim() || null,
-      } as any)
-      .eq("id", exercise.id)
-      .select()
-      .single();
+    const patch = {
+      name: name.trim(),
+      primary_muscle: muscle,
+      equipment: equipment ?? null,
+      category,
+      notes: notes.trim() || null,
+    };
+    try {
+      await offlineUpdate("exercises", patch, { id: exercise.id }, {
+        localTable: "exercises",
+        localId: exercise.id,
+      });
+    } catch (err: any) {
+      setSaving(false);
+      setError(describeWriteError(err));
+      return;
+    }
     setSaving(false);
-    if (err) { setError(err.message); return; }
-    onSaved(data as Exercise);
+    onSaved({ ...exercise, ...patch } as Exercise);
   }
 
   async function handleDelete() {
     if (!deleteConfirm) { setDeleteConfirm(true); return; }
     setDeleting(true);
-    await supabase.from("exercises").delete().eq("id", exercise.id);
+    try {
+      await offlineDelete("exercises", { id: exercise.id }, { localTable: "exercises", localId: exercise.id });
+    } catch (err: any) {
+      setDeleting(false);
+      setError(describeWriteError(err));
+      return;
+    }
     setDeleting(false);
     onClose();
   }

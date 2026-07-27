@@ -1,4 +1,5 @@
 import { createClient } from "@supabase/supabase-js";
+import { AUTH_STORAGE_KEY, readPersistedUser } from "./auth-cache";
 
 const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL ?? "";
 const supabaseAnonKey = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY ?? "";
@@ -10,6 +11,30 @@ if (typeof window !== "undefined" && (!supabaseUrl || !supabaseAnonKey)) {
   );
 }
 
+/**
+ * Teto de tempo para qualquer request ao Supabase.
+ *
+ * `navigator.onLine` mente com frequência no iOS (fica `true` em Wi-Fi sem
+ * internet), e o supabase-js não tem timeout próprio: sem isto, salvar uma série
+ * ficava pendurada indefinidamente no meio do treino. Como o postgrest nunca
+ * refaz um request abortado, o abort também corta o backoff de retry.
+ */
+const REQUEST_TIMEOUT_MS = 12000;
+
+function fetchWithTimeout(input: RequestInfo | URL, init?: RequestInit): Promise<Response> {
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), REQUEST_TIMEOUT_MS);
+
+  // Preserva um signal que o chamador já tenha passado (ex.: .abortSignal())
+  const caller = init?.signal;
+  if (caller) {
+    if (caller.aborted) controller.abort();
+    else caller.addEventListener("abort", () => controller.abort(), { once: true });
+  }
+
+  return fetch(input, { ...init, signal: controller.signal }).finally(() => clearTimeout(timer));
+}
+
 export const supabase = createClient(
   supabaseUrl || "https://placeholder.supabase.co",
   supabaseAnonKey || "placeholder-key",
@@ -17,20 +42,24 @@ export const supabase = createClient(
     auth: {
       persistSession: true,
       autoRefreshToken: true,
-      storageKey: "fitsec_auth",
+      storageKey: AUTH_STORAGE_KEY,
     },
+    global: { fetch: fetchWithTimeout },
   }
 );
 
-/** Retorna o user autenticado ou null. */
-export async function getUser() {
-  const { data } = await supabase.auth.getUser();
-  return data.user;
+/**
+ * Usuário atual **sem tocar na rede** — lê a sessão persistida.
+ *
+ * Use isto (e não `supabase.auth.getUser()`) para carimbar `user_id` em inserts:
+ * o getUser sempre bate no servidor e, offline, devolve null — o registro ia pra
+ * fila sem user_id e a RLS rejeitava no flush, perdendo o treino.
+ */
+export function getCurrentUser() {
+  return readPersistedUser();
 }
 
-/** Retorna o user_id da sessão atual (lança erro se não autenticado). */
-export async function getUserId(): Promise<string> {
-  const user = await getUser();
-  if (!user) throw new Error("Não autenticado");
-  return user.id;
+/** user_id da sessão persistida, ou null se não houver sessão. */
+export function getCurrentUserId(): string | null {
+  return readPersistedUser()?.id ?? null;
 }

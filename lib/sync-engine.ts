@@ -120,6 +120,12 @@ export async function flushQueue(): Promise<{ flushed: number; failed: number }>
   let failed = 0;
 
   try {
+    // Depois de um tempo offline o access token está vencido. Sem renovar antes,
+    // cada mutação da fila tomaria 401 e queimaria uma das MAX_RETRIES — o treino
+    // seria descartado justamente ao reconectar. getSession() renova se precisar.
+    const { data: { session } } = await supabase.auth.getSession();
+    if (!session) return { flushed: 0, failed: 0 };
+
     const pending = await db.pending_mutations.orderBy("created_at").toArray();
     for (const m of pending) {
       if (m.attempts >= MAX_RETRIES) {

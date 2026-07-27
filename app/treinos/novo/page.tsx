@@ -2,7 +2,10 @@
 
 import { useState } from "react";
 import { useRouter } from "next/navigation";
-import { supabase } from "@/lib/supabase";
+import { supabase, getCurrentUserId } from "@/lib/supabase";
+import { offlineInsert, describeWriteError } from "@/lib/offline-writes";
+import { offlineReadList } from "@/lib/offline-reads";
+import { db as offlineDB } from "@/lib/offline-db";
 import { Card, Eyebrow, PageHeader } from "@/components/ui";
 import { Button, Input } from "@/components/Button";
 import Link from "next/link";
@@ -100,25 +103,29 @@ export default function NovoTemplatePage() {
     setSaving(true);
     setError(null);
 
-    const { data: { user } } = await supabase.auth.getUser();
-    const { data, error: err } = await supabase
-      .from("templates")
-      .insert({
-        name: name.trim(),
-        description: description.trim() || null,
-        split_type: splitType.trim() || null,
-        is_active: false,
-        user_id: user?.id,
-      } as any)
-      .select()
-      .single();
-
-    setSaving(false);
-    if (err) {
-      setError(err.message);
+    // user_id vem da sessão persistida: auth.getUser() bate na rede e devolve null offline
+    const userId = getCurrentUserId();
+    let created: { id: string };
+    try {
+      created = await offlineInsert(
+        "templates",
+        {
+          name: name.trim(),
+          description: description.trim() || null,
+          split_type: splitType.trim() || null,
+          is_active: false,
+          user_id: userId,
+        },
+        { localTable: "templates" }
+      );
+    } catch (err: any) {
+      setSaving(false);
+      setError(describeWriteError(err));
       return;
     }
-    router.push(`/treinos/template/${(data as any).id}`);
+
+    setSaving(false);
+    router.push(`/treinos/template?id=${created.id}`);
   }
 
   async function importPreset() {
@@ -127,45 +134,45 @@ export default function NovoTemplatePage() {
 
     try {
       // 1. Cria template
-      const { data: { user } } = await supabase.auth.getUser();
-      const { data: tpl, error: tplErr } = await supabase
-        .from("templates")
-        .insert({
+      // user_id vem da sessão persistida: auth.getUser() bate na rede e devolve null offline
+      const userId = getCurrentUserId();
+      const tpl = await offlineInsert(
+        "templates",
+        {
           name: UL_PPL_PRESET.name,
           description: UL_PPL_PRESET.description,
           split_type: UL_PPL_PRESET.split_type,
           is_active: true,
-          user_id: user?.id,
-        } as any)
-        .select()
-        .single();
-      if (tplErr) throw tplErr;
-      const templateId = (tpl as any).id;
+          user_id: userId,
+        },
+        { localTable: "templates" }
+      );
+      const templateId = tpl.id;
 
       // 2. Busca todos os exercicios pelo nome (precisamos dos IDs)
       const allExerciseNames = UL_PPL_PRESET.days.flatMap((d) => d.exercises.map((e) => e.name));
-      const { data: exercises } = await supabase
-        .from("exercises")
-        .select("id, name")
-        .in("name", allExerciseNames);
+      const exercises = await offlineReadList<{ id: string; name: string }>(
+        () => supabase.from("exercises").select("id, name").in("name", allExerciseNames),
+        async () =>
+          offlineDB ? offlineDB.exercises.filter((e) => allExerciseNames.includes(e.name)).toArray() : null
+      );
 
       const exerciseMap = new Map<string, string>();
-      (exercises as any[])?.forEach((e) => exerciseMap.set(e.name, e.id));
+      exercises.forEach((e) => exerciseMap.set(e.name, e.id));
 
       // 3. Cria os dias e exercicios
       for (const day of UL_PPL_PRESET.days) {
-        const { data: dayData, error: dayErr } = await supabase
-          .from("template_days")
-          .insert({
+        const dayData = await offlineInsert(
+          "template_days",
+          {
             template_id: templateId,
             name: day.name,
             day_order: day.day_order,
             weekday: day.weekday,
-          } as any)
-          .select()
-          .single();
-        if (dayErr) throw dayErr;
-        const dayId = (dayData as any).id;
+          },
+          { localTable: "template_days" }
+        );
+        const dayId = dayData.id;
 
         const dayExercises = day.exercises
           .map((ex, idx) => {
@@ -187,14 +194,16 @@ export default function NovoTemplatePage() {
           })
           .filter(Boolean);
 
-        if (dayExercises.length > 0) {
-          await supabase.from("template_exercises").insert(dayExercises as any);
-        }
+        await Promise.all(
+          dayExercises.map((ex) =>
+            offlineInsert("template_exercises", ex as any, { localTable: "template_exercises" })
+          )
+        );
       }
 
-      router.push(`/treinos/template/${templateId}`);
+      router.push(`/treinos/template?id=${templateId}`);
     } catch (e: any) {
-      setError(e.message ?? "Erro ao importar");
+      setError(describeWriteError(e));
       setSaving(false);
     }
   }

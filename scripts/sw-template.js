@@ -4,89 +4,16 @@
 //
 // NÃO edite public/sw.js — edite este arquivo.
 
-const VERSION = "9hP1RHizpn9AcDFJCCDfA";
+const VERSION = "__BUILD_ID__";
 const CACHE = "fitsec-" + VERSION;
 
 // Chunks JS/CSS do build (nomes com hash → imutáveis).
 // Sem isso o app abria em branco offline: todas as páginas são "use client",
 // e o SW antigo ignorava /_next/, então o JS nunca era cacheado.
-const PRECACHE_ASSETS = [
-  "/_next/static/9hP1RHizpn9AcDFJCCDfA/_buildManifest.js",
-  "/_next/static/9hP1RHizpn9AcDFJCCDfA/_ssgManifest.js",
-  "/_next/static/chunks/101-9698c410db234899.js",
-  "/_next/static/chunks/117-7bf0dad226a9fc21.js",
-  "/_next/static/chunks/162-674c88c6eda65e70.js",
-  "/_next/static/chunks/44530001-9b9daae6bcc8e13c.js",
-  "/_next/static/chunks/492-546f5bc2cacc6795.js",
-  "/_next/static/chunks/533-d4ceace4939cd04b.js",
-  "/_next/static/chunks/601-d63898c72d21787c.js",
-  "/_next/static/chunks/648-33438c3959560a82.js",
-  "/_next/static/chunks/652-5fc96f0720a99150.js",
-  "/_next/static/chunks/659-08cbc3cc1b7bbfa4.js",
-  "/_next/static/chunks/689-10a6472c0a01a5ff.js",
-  "/_next/static/chunks/966-ec1d7f512174d718.js",
-  "/_next/static/chunks/app/_not-found/page-0c9aa90fe6aaf72b.js",
-  "/_next/static/chunks/app/biblioteca/page-99e0dd6bdd1ea4e7.js",
-  "/_next/static/chunks/app/historico/page-eae7fdb575f01670.js",
-  "/_next/static/chunks/app/layout-bd59710fc5478f9d.js",
-  "/_next/static/chunks/app/login/page-b153439f5aad1f5d.js",
-  "/_next/static/chunks/app/page-7c8ce5e7615efda2.js",
-  "/_next/static/chunks/app/perfil/page-5dd528129a77daa6.js",
-  "/_next/static/chunks/app/public/sessao/[id]/page-ac4cc9664a5036ce.js",
-  "/_next/static/chunks/app/sessao/[id]/page-c642186aaba38c1b.js",
-  "/_next/static/chunks/app/sessao/[id]/resumo/page-562c434320b15a3d.js",
-  "/_next/static/chunks/app/sessao/ativa/page-af4ad1ac8b5912b4.js",
-  "/_next/static/chunks/app/sessao/page-9634e6514db784b2.js",
-  "/_next/static/chunks/app/sessao/resumo/page-f7eac40c72615b79.js",
-  "/_next/static/chunks/app/stats/[exerciseId]/page-d9123514d92eff06.js",
-  "/_next/static/chunks/app/stats/exercicio/page-4aabf067ed493d6f.js",
-  "/_next/static/chunks/app/stats/page-e375c718fe981ce6.js",
-  "/_next/static/chunks/app/treinos/dia/page-c3403c65eaaeecbb.js",
-  "/_next/static/chunks/app/treinos/mesociclo/novo/page-3e894e9fffc2a58c.js",
-  "/_next/static/chunks/app/treinos/mesociclo/page-f1e5a82a5b5cfa41.js",
-  "/_next/static/chunks/app/treinos/novo/page-7f56039e11e80304.js",
-  "/_next/static/chunks/app/treinos/page-2cf282944ffd1834.js",
-  "/_next/static/chunks/app/treinos/template/[id]/dia/[dayId]/page-77d8c1e580961f6f.js",
-  "/_next/static/chunks/app/treinos/template/[id]/page-fab421b684cb777c.js",
-  "/_next/static/chunks/app/treinos/template/page-96016cfcf7836a3b.js",
-  "/_next/static/chunks/fd9d1056-090e7b7a3a7d88a0.js",
-  "/_next/static/chunks/framework-00a8ba1a63cfdc9e.js",
-  "/_next/static/chunks/main-7113440c8025a9cb.js",
-  "/_next/static/chunks/main-app-e39e4f96995db67e.js",
-  "/_next/static/chunks/pages/_app-6f5312077c4a5604.js",
-  "/_next/static/chunks/pages/_error-2f37a8b74d52c0a0.js",
-  "/_next/static/chunks/polyfills-42372ed130431b0a.js",
-  "/_next/static/chunks/webpack-36a1d514310b5a92.js",
-  "/_next/static/css/66b1c36baf34f51e.css"
-];
+const PRECACHE_ASSETS = __PRECACHE_ASSETS__;
 
 // HTML das rotas estáticas + arquivos de public/ (manifest, ícones, offline.html)
-const PRECACHE_PAGES = [
-  "/",
-  "/biblioteca",
-  "/historico",
-  "/login",
-  "/perfil",
-  "/sessao",
-  "/sessao/ativa",
-  "/sessao/resumo",
-  "/stats",
-  "/stats/exercicio",
-  "/treinos",
-  "/treinos/dia",
-  "/treinos/mesociclo",
-  "/treinos/mesociclo/novo",
-  "/treinos/novo",
-  "/treinos/template",
-  "/apple-touch-icon.png",
-  "/favicon-16.png",
-  "/favicon-32.png",
-  "/icon-192.png",
-  "/icon-512.png",
-  "/icon.svg",
-  "/manifest.json",
-  "/offline.html"
-];
+const PRECACHE_PAGES = __PRECACHE_PAGES__;
 
 const OFFLINE_URL = "/offline.html";
 const FONT_HOSTS = ["fonts.googleapis.com", "fonts.gstatic.com"];

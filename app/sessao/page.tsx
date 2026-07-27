@@ -3,13 +3,13 @@
 import { useEffect, useState } from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
-import { supabase } from "@/lib/supabase";
+import { supabase, getCurrentUserId } from "@/lib/supabase";
 import { Card, Eyebrow, PageHeader, Pill } from "@/components/ui";
 import { Button, Spinner } from "@/components/Button";
 import { useToast } from "@/components/Toast";
 import { useProfile } from "@/components/ProfileProvider";
-import { offlineInsert } from "@/lib/offline-writes";
-import { offlineRead } from "@/lib/offline-reads";
+import { offlineInsert, offlineUpdate } from "@/lib/offline-writes";
+import { offlineRead, offlineReadList } from "@/lib/offline-reads";
 import { db as offlineDB } from "@/lib/offline-db";
 import { fmtRelativeDate, WEEKDAY_LABELS } from "@/lib/utils";
 import type { Mesocycle, TemplateDay, WorkoutSession } from "@/lib/database.types";
@@ -54,12 +54,12 @@ export default function SessaoIndex() {
       const elapsedMin = (Date.now() - new Date(active.started_at).getTime()) / 60000;
       if (elapsedMin > SESSION_MAX_MINUTES) {
         const autoEnd = new Date(new Date(active.started_at).getTime() + SESSION_MAX_MINUTES * 60000);
-        try {
-          await supabase
-            .from("workout_sessions")
-            .update({ completed_at: autoEnd.toISOString(), ended_at: autoEnd.toISOString(), duration_minutes: SESSION_MAX_MINUTES } as any)
-            .eq("id", active.id);
-        } catch {/* offline — ignora */}
+        await offlineUpdate(
+          "workout_sessions",
+          { completed_at: autoEnd.toISOString(), ended_at: autoEnd.toISOString(), duration_minutes: SESSION_MAX_MINUTES },
+          { id: active.id },
+          { localTable: "workout_sessions", localId: active.id }
+        );
       } else {
         setActiveSession(active);
       }
@@ -106,33 +106,38 @@ export default function SessaoIndex() {
       setTodayDay(dayData);
 
       if (dayData) {
-        try {
-          const { count } = await supabase
-            .from("template_exercises")
-            .select("*", { count: "exact", head: true })
-            .eq("template_day_id", dayData.id);
-          setExerciseCount(count ?? 0);
-        } catch {
-          if (offlineDB) {
-            const n = await offlineDB.template_exercises.where("template_day_id").equals(dayData.id).count();
-            setExerciseCount(n);
-          }
-        }
+        const prescribed = await offlineReadList<{ id: string }>(
+          () => supabase.from("template_exercises").select("id").eq("template_day_id", dayData.id),
+          async () =>
+            offlineDB
+              ? offlineDB.template_exercises.where("template_day_id").equals(dayData.id).toArray()
+              : null
+        );
+        setExerciseCount(prescribed.length);
 
         // Estima duração baseada nas últimas 5 sessões desse dia
-        try {
-          const { data: pastSessions } = await supabase
-            .from("workout_sessions")
-            .select("duration_minutes")
-            .eq("template_day_id", dayData.id)
-            .not("duration_minutes", "is", null)
-            .order("session_date", { ascending: false })
-            .limit(5);
-          if (pastSessions && pastSessions.length > 0) {
-            const avg = pastSessions.reduce((s, p) => s + (p as any).duration_minutes, 0) / pastSessions.length;
-            setEstimatedDuration(Math.round(avg));
+        const pastSessions = await offlineReadList<{ duration_minutes: number }>(
+          () =>
+            supabase
+              .from("workout_sessions")
+              .select("duration_minutes")
+              .eq("template_day_id", dayData.id)
+              .not("duration_minutes", "is", null)
+              .order("session_date", { ascending: false })
+              .limit(5),
+          async () => {
+            if (!offlineDB) return null;
+            const list = await offlineDB.workout_sessions
+              .filter((s) => s.template_day_id === dayData.id && s.duration_minutes != null)
+              .toArray();
+            list.sort((a, b) => b.session_date.localeCompare(a.session_date));
+            return list.slice(0, 5) as any[];
           }
-        } catch {/* sem estimativa */}
+        );
+        if (pastSessions.length > 0) {
+          const avg = pastSessions.reduce((s, p) => s + p.duration_minutes, 0) / pastSessions.length;
+          setEstimatedDuration(Math.round(avg));
+        }
       }
     }
 
@@ -169,7 +174,8 @@ export default function SessaoIndex() {
     setShowCheckin(false);
     const templateDayId = pendingDayId;
 
-    const { data: { user } } = await supabase.auth.getUser();
+    // user_id vem da sessão persistida: auth.getUser() bate na rede e devolve null offline
+    const userId = getCurrentUserId();
     const bodyweight = profile?.current_bodyweight_kg ?? null;
 
     // Insert offline-first — funciona mesmo sem internet
@@ -182,7 +188,7 @@ export default function SessaoIndex() {
         started_at: new Date().toISOString(),
         bodyweight_kg: bodyweight,
         energy_level: energy,
-        user_id: user?.id,
+        user_id: userId,
       },
       { localTable: "workout_sessions" }
     );
@@ -190,25 +196,19 @@ export default function SessaoIndex() {
     const sessionId = session.id;
 
     if (templateDayId) {
-      // Tenta puxar prescrição — se offline, lê do Dexie local
-      let prescribed: any[] | null = null;
-      try {
-        const { data } = await supabase
-          .from("template_exercises")
-          .select("*")
-          .eq("template_day_id", templateDayId)
-          .order("exercise_order");
-        prescribed = data;
-      } catch {
-        // Offline — usa cache local
-        const { db } = await import("@/lib/offline-db");
-        if (db) {
-          prescribed = await db.template_exercises
-            .where("template_day_id")
-            .equals(templateDayId)
-            .sortBy("exercise_order");
-        }
-      }
+      // Prescrição do dia — do servidor, com o Dexie como fallback offline
+      const prescribed = await offlineReadList<any>(
+        () =>
+          supabase
+            .from("template_exercises")
+            .select("*")
+            .eq("template_day_id", templateDayId)
+            .order("exercise_order"),
+        async () =>
+          offlineDB
+            ? offlineDB.template_exercises.where("template_day_id").equals(templateDayId).sortBy("exercise_order")
+            : null
+      );
 
       if (prescribed && prescribed.length > 0) {
         await Promise.all(
@@ -234,7 +234,7 @@ export default function SessaoIndex() {
       }
     }
 
-    router.push(`/sessao/${sessionId}`);
+    router.push(`/sessao/ativa?id=${sessionId}`);
   }
 
   // Deload hint: current meso week >= deload_week
@@ -294,7 +294,7 @@ export default function SessaoIndex() {
               return min > 0 ? ` · ${min} min` : "";
             })()}
           </div>
-          <Link href={`/sessao/${activeSession.id}`}>
+          <Link href={`/sessao/ativa?id=${activeSession.id}`}>
             <div
               className="py-3 rounded-lg text-center text-sm font-bold cursor-pointer"
               style={{ background: "var(--primary)", color: "var(--background)" }}
@@ -354,7 +354,7 @@ export default function SessaoIndex() {
           {recentSessions.map((s) => (
             <Link
               key={s.id}
-              href={s.completed_at ? `/sessao/${s.id}/resumo` : `/sessao/${s.id}`}
+              href={s.completed_at ? `/sessao/resumo?id=${s.id}` : `/sessao/ativa?id=${s.id}`}
             >
               <Card className="!p-3 mb-2">
                 <div className="flex justify-between items-center">

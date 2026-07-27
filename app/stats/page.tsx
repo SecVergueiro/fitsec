@@ -696,7 +696,7 @@ export default function StatsPage() {
               <Eyebrow className="mb-2">Top 5 e1RM</Eyebrow>
               <Card className="!p-0 mb-5">
                 {recentPRs.map((pr, idx) => (
-                  <Link key={pr.exercise_id} href={`/stats/${pr.exercise_id}`}>
+                  <Link key={pr.exercise_id} href={`/stats/exercicio?id=${pr.exercise_id}`}>
                     <div
                       className="px-4 py-3 flex justify-between items-center"
                       style={{
@@ -823,7 +823,7 @@ export default function StatsPage() {
 
               <div className="space-y-2">
                 {filtered.map((s) => (
-                  <Link key={s.exercise.id} href={`/stats/${s.exercise.id}`}>
+                  <Link key={s.exercise.id} href={`/stats/exercicio?id=${s.exercise.id}`}>
                     <Card className="!p-3 mb-2">
                       <div className="flex justify-between items-center">
                         <div className="flex-1 min-w-0">

@@ -2,6 +2,9 @@
 
 import { useEffect, useState } from "react";
 import { supabase } from "@/lib/supabase";
+import { offlineInsert } from "@/lib/offline-writes";
+import { offlineReadList } from "@/lib/offline-reads";
+import { db as offlineDB } from "@/lib/offline-db";
 import { Input, Button } from "@/components/Button";
 import { ExerciseItem } from "@/components/ExerciseItem";
 import { MUSCLE_LABELS } from "@/lib/utils";
@@ -31,8 +34,11 @@ export function AddExerciseToSessionModal({
   const [showNewExercise, setShowNewExercise] = useState(false);
 
   async function loadExercises() {
-    const { data } = await supabase.from("exercises").select("*").order("name");
-    setExercises((data as Exercise[]) ?? []);
+    const data = await offlineReadList<Exercise>(
+      () => supabase.from("exercises").select("*").order("name"),
+      async () => (offlineDB ? offlineDB.exercises.orderBy("name").toArray() : null)
+    );
+    setExercises(data);
   }
 
   useEffect(() => {
@@ -49,16 +55,21 @@ export function AddExerciseToSessionModal({
 
   async function add(ex: Exercise) {
     setAdding(true);
-    await supabase.from("session_exercises").insert({
-      session_id: sessionId,
-      exercise_id: ex.id,
-      exercise_order: existingOrder + 1,
-      prescribed_sets: 3,
-      rep_range_min: 8,
-      rep_range_max: 12,
-      target_rir: 2,
-      rest_seconds: 90,
-    } as any);
+    await offlineInsert(
+      "session_exercises",
+      {
+        session_id: sessionId,
+        exercise_id: ex.id,
+        exercise_order: existingOrder + 1,
+        prescribed_sets: 3,
+        rep_range_min: 8,
+        rep_range_max: 12,
+        target_rir: 2,
+        rest_seconds: 90,
+        is_completed: false,
+      },
+      { localTable: "session_exercises" }
+    );
     setAdding(false);
     onAdded();
   }

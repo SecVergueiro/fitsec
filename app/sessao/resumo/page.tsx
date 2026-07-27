@@ -1,0 +1,916 @@
+"use client";
+
+import { Suspense, useEffect, useState } from "react";
+import Link from "next/link";
+import { useSearchParams, useRouter } from "next/navigation";
+import { supabase, getCurrentUserId } from "@/lib/supabase";
+import { Card, Eyebrow, Pill } from "@/components/ui";
+import { Button, Spinner } from "@/components/Button";
+import { useConfirm } from "@/components/Toast";
+import { offlineInsert, offlineUpdate, offlineDelete } from "@/lib/offline-writes";
+import { offlineRead, offlineReadList } from "@/lib/offline-reads";
+import { pendingCount } from "@/lib/sync-engine";
+import { db as offlineDB } from "@/lib/offline-db";
+import { classifyVolume, estimate1RM, fmtDuration, fmtKg, fmtTonnage, MUSCLE_LABELS } from "@/lib/utils";
+import type { Exercise, SessionSet, WorkoutSession } from "@/lib/database.types";
+
+interface ExSummary {
+  id: string;
+  exercise: Exercise;
+  allSets: SessionSet[];
+  realSets: SessionSet[];
+  isPR: boolean;
+  sessionBest: { weight: number; reps: number; e1rm: number };
+  prevBest1RM: number;
+}
+
+// Rota estática lendo o id da query string — ver comentário em /sessao/ativa.
+// Terminar um treino offline cai aqui, então ela precisa ser pré-cacheável.
+export default function ResumoRoute() {
+  return (
+    <Suspense fallback={<div className="flex justify-center py-10"><Spinner /></div>}>
+      <ResumoPage />
+    </Suspense>
+  );
+}
+
+function ResumoPage() {
+  const searchParams = useSearchParams();
+  const router = useRouter();
+  const sessionId = searchParams.get("id") ?? "";
+  const confirm = useConfirm();
+
+  const [session, setSession] = useState<WorkoutSession | null>(null);
+  const [summary, setSummary] = useState<ExSummary[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [showEditModal, setShowEditModal] = useState(false);
+  const [prevVolume, setPrevVolume] = useState<{ tonnage: number; sets: number; dayName: string } | null>(null);
+  const [editingName, setEditingName] = useState(false);
+  const [nameInput, setNameInput] = useState("");
+  const [dayName, setDayName] = useState<string | null>(null);
+
+  async function saveName() {
+    const trimmed = nameInput.trim();
+    await offlineUpdate("workout_sessions", { custom_name: trimmed || null }, { id: sessionId }, {
+      localTable: "workout_sessions",
+      localId: sessionId,
+    });
+    setSession((s) => s ? { ...s, custom_name: trimmed || null } : s);
+    setEditingName(false);
+  }
+
+  async function handleShare() {
+    // Marca a sessão como pública antes de compartilhar
+    await offlineUpdate("workout_sessions", { is_public: true }, { id: sessionId }, {
+      localTable: "workout_sessions",
+      localId: sessionId,
+    });
+
+    const url = `${window.location.origin}/public/sessao/${sessionId}`;
+    if (navigator.share) {
+      await navigator.share({ title: "Meu treino — FitSec", url }).catch(() => {});
+    } else {
+      await navigator.clipboard.writeText(url).catch(() => {});
+      alert("Link copiado!");
+    }
+  }
+
+  async function handleDelete() {
+    const ok = await confirm({
+      title: "Apagar treino?",
+      message: "Todas as séries serão removidas permanentemente.",
+      confirmLabel: "Apagar",
+      danger: true,
+    });
+    if (!ok) return;
+    // Apaga também o espelho local; sem isso a sessão reaparecia na tela offline
+    if (offlineDB) {
+      await offlineDB.session_sets.where("session_id").equals(sessionId).delete().catch(() => 0);
+      await offlineDB.session_exercises.where("session_id").equals(sessionId).delete().catch(() => 0);
+    }
+    await offlineDelete("session_sets", { session_id: sessionId });
+    await offlineDelete("session_exercises", { session_id: sessionId });
+    await offlineDelete("workout_sessions", { id: sessionId }, { localTable: "workout_sessions", localId: sessionId });
+    router.push("/historico");
+  }
+
+  async function handleRepeat() {
+    // Clona o treino completo como nova sessão
+    const ok = await confirm({
+      title: "Repetir este treino?",
+      message: "Cria uma nova sessão com os mesmos exercícios e prescrição.",
+      confirmLabel: "Repetir treino",
+      danger: false,
+    });
+    if (!ok || !session) return;
+
+    // user_id vem da sessão persistida: auth.getUser() bate na rede e devolve null offline
+    const userId = getCurrentUserId();
+
+    // Pega mesociclo ativo (se houver)
+    const activeMeso = await offlineRead<{ id: string }>(
+      () => supabase.from("mesocycles").select("id").eq("is_active", true).limit(1).maybeSingle(),
+      async () => {
+        if (!offlineDB) return null;
+        const list = await offlineDB.mesocycles.filter((m) => (m as any).is_active === true).toArray();
+        return list[0] ? { id: list[0].id } : null;
+      }
+    );
+
+    // Cria nova sessão
+    const newSession = await offlineInsert(
+      "workout_sessions",
+      {
+        template_day_id: session.template_day_id,
+        mesocycle_id: activeMeso?.id ?? null,
+        session_date: new Date().toLocaleDateString("en-CA"),
+        started_at: new Date().toISOString(),
+        user_id: userId,
+      },
+      { localTable: "workout_sessions" }
+    );
+
+    const newId = newSession.id;
+
+    // Copia os exercícios da sessão atual (mantendo prescrição)
+    const oldExs = await offlineReadList<any>(
+      () => supabase.from("session_exercises").select("*").eq("session_id", sessionId).order("exercise_order"),
+      async () =>
+        offlineDB
+          ? offlineDB.session_exercises.where("session_id").equals(sessionId).sortBy("exercise_order")
+          : null
+    );
+
+    await Promise.all(
+      oldExs.map((ex) =>
+        offlineInsert(
+          "session_exercises",
+          {
+            session_id: newId,
+            exercise_id: ex.exercise_id,
+            template_exercise_id: ex.template_exercise_id,
+            exercise_order: ex.exercise_order,
+            prescribed_sets: ex.prescribed_sets,
+            rep_range_min: ex.rep_range_min,
+            rep_range_max: ex.rep_range_max,
+            target_rir: ex.target_rir,
+            rest_seconds: ex.rest_seconds,
+            superset_group: ex.superset_group,
+            is_completed: false,
+          },
+          { localTable: "session_exercises" }
+        )
+      )
+    );
+    router.push(`/sessao/ativa?id=${newId}`);
+  }
+
+  async function handleReopen() {
+    const ok = await confirm({
+      title: "Reabrir treino?",
+      message: "O treino volta a ficar em andamento e você pode editar tudo: exercícios, séries, ordem.",
+      confirmLabel: "Reabrir e editar",
+      danger: false,
+    });
+    if (!ok) return;
+    await offlineUpdate(
+      "workout_sessions",
+      { completed_at: null, ended_at: null, duration_minutes: null },
+      { id: sessionId },
+      { localTable: "workout_sessions", localId: sessionId }
+    );
+    router.push(`/sessao/ativa?id=${sessionId}`);
+  }
+
+  useEffect(() => {
+    load();
+  }, [sessionId]);
+
+  async function load() {
+    setLoading(true);
+
+    // Treino recém-terminado offline só existe no cache local — ver /sessao/ativa
+    const preferLocal = (await pendingCount()) > 0;
+
+    const [sessionData, exList, allSets] = await Promise.all([
+      offlineRead<WorkoutSession>(
+        () => supabase.from("workout_sessions").select("*").eq("id", sessionId).maybeSingle(),
+        async () => (offlineDB ? (await offlineDB.workout_sessions.get(sessionId)) ?? null : null),
+        { preferLocal }
+      ),
+      offlineReadList<any>(
+        () => supabase.from("session_exercises").select("*, exercise:exercises(*)").eq("session_id", sessionId).order("exercise_order"),
+        async () => {
+          if (!offlineDB) return null;
+          const exs = await offlineDB.session_exercises.where("session_id").equals(sessionId).sortBy("exercise_order");
+          return Promise.all(
+            exs.map(async (e) => ({ ...e, exercise: (await offlineDB.exercises.get(e.exercise_id)) ?? null }))
+          );
+        },
+        { preferLocal }
+      ),
+      offlineReadList<SessionSet>(
+        () => supabase.from("session_sets").select("*").eq("session_id", sessionId),
+        async () => (offlineDB ? offlineDB.session_sets.where("session_id").equals(sessionId).toArray() : null),
+        { preferLocal }
+      ),
+    ]);
+
+    setSession(sessionData);
+
+    // Carrega nome do template_day se houver
+    const tdId = (sessionData as any)?.template_day_id;
+    if (tdId) {
+      const td = await offlineRead<{ name: string }>(
+        () => supabase.from("template_days").select("name").eq("id", tdId).maybeSingle(),
+        async () => {
+          if (!offlineDB) return null;
+          const d = await offlineDB.template_days.get(tdId);
+          return d ? { name: d.name } : null;
+        }
+      );
+      setDayName(td?.name ?? null);
+    }
+
+    const enriched = await Promise.all(
+      exList.map(async (ex) => {
+        const exAllSets = allSets.filter((s) => s.exercise_id === ex.exercise_id);
+        const exRealSets = exAllSets.filter((s) => !s.is_warmup);
+
+        const sessionBest =
+          exRealSets.length > 0
+            ? exRealSets.reduce(
+                (best, s) => {
+                  const e1 = estimate1RM(s.weight_kg, s.reps);
+                  return e1 > best.e1rm ? { weight: s.weight_kg, reps: s.reps, e1rm: e1 } : best;
+                },
+                { weight: 0, reps: 0, e1rm: 0 }
+              )
+            : { weight: 0, reps: 0, e1rm: 0 };
+
+        let prevBest1RM = 0;
+        if (sessionBest.e1rm > 0) {
+          const prevSets = await offlineReadList<any>(
+            () =>
+              supabase
+                .from("session_sets")
+                .select("weight_kg, reps")
+                .eq("exercise_id", ex.exercise_id)
+                .eq("is_warmup", false)
+                .neq("session_id", sessionId)
+                .limit(100),
+            async () =>
+              offlineDB
+                ? offlineDB.session_sets
+                    .where("exercise_id").equals(ex.exercise_id)
+                    .filter((s) => !s.is_warmup && s.session_id !== sessionId)
+                    .toArray()
+                : null
+          );
+
+          if (prevSets.length > 0) {
+            prevBest1RM = Math.max(...prevSets.map((s) => estimate1RM(s.weight_kg, s.reps)));
+          }
+        }
+
+        return {
+          id: ex.id,
+          exercise: ex.exercise as Exercise,
+          allSets: exAllSets,
+          realSets: exRealSets,
+          isPR: sessionBest.e1rm > 0 && sessionBest.e1rm > prevBest1RM,
+          sessionBest,
+          prevBest1RM,
+        };
+      })
+    );
+
+    setSummary(enriched);
+
+    // Comparativo de volume vs última sessão do mesmo template_day
+    const sd = sessionData as WorkoutSession | null;
+    if (sd?.template_day_id) {
+      const prevDaySession = await offlineRead<any>(
+        () =>
+          supabase
+            .from("workout_sessions")
+            .select("id, template_days(name)")
+            .eq("template_day_id", sd.template_day_id!)
+            .not("completed_at", "is", null)
+            .neq("id", sessionId)
+            .order("session_date", { ascending: false })
+            .limit(1)
+            .maybeSingle(),
+        async () => {
+          if (!offlineDB) return null;
+          const list = await offlineDB.workout_sessions
+            .filter((s) => s.template_day_id === sd.template_day_id && s.completed_at != null && s.id !== sessionId)
+            .toArray();
+          list.sort((a, b) => b.session_date.localeCompare(a.session_date));
+          if (!list[0]) return null;
+          const day = await offlineDB.template_days.get(sd.template_day_id!);
+          return { id: list[0].id, template_days: day ? { name: day.name } : null };
+        }
+      );
+
+      if (prevDaySession) {
+        const prevSets = await offlineReadList<any>(
+          () => supabase.from("session_sets").select("weight_kg, reps, is_warmup").eq("session_id", prevDaySession.id),
+          async () =>
+            offlineDB ? offlineDB.session_sets.where("session_id").equals(prevDaySession.id).toArray() : null
+        );
+        const real = prevSets.filter((s) => !s.is_warmup);
+        const prevTonnage = real.reduce((sum, s) => sum + s.weight_kg * s.reps, 0);
+        setPrevVolume({
+          tonnage: prevTonnage,
+          sets: real.length,
+          dayName: (prevDaySession as any).template_days?.name ?? "última sessão",
+        });
+      }
+    }
+
+    setLoading(false);
+  }
+
+  if (loading) {
+    return (
+      <div className="flex justify-center py-10">
+        <Spinner />
+      </div>
+    );
+  }
+
+  if (!session) {
+    return (
+      <div className="fade-in text-center py-10">
+        <p style={{ color: "var(--muted)" }}>Sessão não encontrada</p>
+        <Link href="/">
+          <Button variant="secondary" className="mt-4" size="sm">
+            Voltar ao início
+          </Button>
+        </Link>
+      </div>
+    );
+  }
+
+  const allWorkingSets = summary.flatMap((e) => e.realSets);
+  const tonnage = allWorkingSets.reduce((sum, s) => sum + s.weight_kg * s.reps, 0);
+  const prs = summary.filter((e) => e.isPR);
+  const failureCount = allWorkingSets.filter((s) => s.is_failure).length;
+  const duration = session.duration_minutes ?? 0;
+
+  // Volume por grupo muscular nesta sessão
+  const volumeByMuscle: Record<string, number> = {};
+  summary.forEach((ex) => {
+    const m = ex.exercise.primary_muscle;
+    volumeByMuscle[m] = (volumeByMuscle[m] ?? 0) + ex.realSets.length;
+  });
+
+  return (
+    <div className="fade-in">
+      <Link href="/historico" className="text-xs font-medium block mb-3" style={{ color: "var(--muted)", minHeight: "auto" }}>
+        ← Histórico
+      </Link>
+      {/* Cabeçalho de conclusão */}
+      <div className="text-center pt-4 pb-6">
+        <div
+          className="w-16 h-16 rounded-full flex items-center justify-center mx-auto mb-4"
+          style={{
+            background: "rgba(152, 181, 210, 0.10)",
+            border: "0.5px solid var(--border-strong)",
+          }}
+        >
+          <CheckIcon />
+        </div>
+        {editingName ? (
+          <div className="flex items-center justify-center gap-2 mb-1.5">
+            <input
+              value={nameInput}
+              onChange={(e) => setNameInput(e.target.value)}
+              onKeyDown={(e) => { if (e.key === "Enter") saveName(); if (e.key === "Escape") setEditingName(false); }}
+              autoFocus
+              placeholder="Nome do treino"
+              className="text-2xl text-center font-bold rounded-lg px-3 py-1"
+              style={{
+                fontFamily: "'Barlow Condensed', sans-serif",
+                background: "var(--surface)",
+                border: "1px solid var(--accent)",
+                color: "var(--text)",
+                outline: "none",
+                maxWidth: "80%",
+              }}
+            />
+            <button onClick={saveName} aria-label="Salvar"
+              className="rounded-lg flex items-center justify-center"
+              style={{ width: 36, height: 36, minHeight: 36, background: "var(--accent)", color: "var(--background)", cursor: "pointer" }}>
+              <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="3" strokeLinecap="round" strokeLinejoin="round">
+                <polyline points="20 6 9 17 4 12"/>
+              </svg>
+            </button>
+          </div>
+        ) : (
+          <button
+            onClick={() => { setNameInput(session.custom_name ?? dayName ?? ""); setEditingName(true); }}
+            className="inline-flex items-center gap-2 mb-1.5"
+            style={{ minHeight: "auto", padding: "4px 8px", background: "transparent", border: "none", cursor: "pointer" }}
+            aria-label="Editar nome do treino"
+          >
+            <h1
+              className="text-3xl"
+              style={{ fontFamily: "'Barlow Condensed', sans-serif", fontWeight: 800, letterSpacing: "0.01em" }}
+            >
+              {session.custom_name || dayName || "Treino livre"}
+            </h1>
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" style={{ color: "var(--faint)" }}>
+              <path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7"/>
+              <path d="M18.5 2.5a2.121 2.121 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z"/>
+            </svg>
+          </button>
+        )}
+        <p className="text-sm" style={{ color: "var(--muted)" }}>
+          {new Date(session.session_date + "T12:00:00").toLocaleDateString("pt-BR", {
+            weekday: "long",
+            day: "numeric",
+            month: "long",
+          })}
+        </p>
+      </div>
+
+      {/* Energia, peso corporal e notas */}
+      {(session.energy_level || session.bodyweight_kg || session.notes) && (
+        <Card className="mb-4">
+          <div className="space-y-3">
+            {session.bodyweight_kg && (
+              <div className="flex items-center justify-between">
+                <span className="text-xs font-bold" style={{ color: "var(--muted)", letterSpacing: "0.08em", textTransform: "uppercase" }}>
+                  Peso corporal
+                </span>
+                <span className="text-sm font-bold tabular">{fmtKg(session.bodyweight_kg)} kg</span>
+              </div>
+            )}
+            {session.energy_level && (
+              <div className="flex items-center justify-between">
+                <span className="text-xs font-bold" style={{ color: "var(--muted)", letterSpacing: "0.08em", textTransform: "uppercase" }}>
+                  Energia
+                </span>
+                <div className="flex gap-1.5">
+                  {[1, 2, 3, 4, 5].map((i) => (
+                    <div
+                      key={i}
+                      className="rounded"
+                      style={{
+                        width: "18px",
+                        height: "18px",
+                        background: i <= session.energy_level! ? "var(--accent)" : "var(--surface-strong)",
+                      }}
+                    />
+                  ))}
+                </div>
+              </div>
+            )}
+            {session.notes && (
+              <p className="text-sm leading-relaxed" style={{ color: "var(--muted)" }}>
+                {session.notes}
+              </p>
+            )}
+          </div>
+        </Card>
+      )}
+
+      {/* Grade de estatísticas */}
+      <Card variant="strong" className="mb-4">
+        <div className="grid grid-cols-2 gap-x-4 gap-y-5">
+          <Stat label="Duração" value={duration > 0 ? fmtDuration(duration) : "—"} />
+          <Stat label="Séries" value={String(allWorkingSets.length)} />
+          <Stat label="Exercícios" value={String(summary.length)} />
+          <Stat label="Volume" value={fmtTonnage(tonnage)} />
+        </div>
+      </Card>
+
+      {/* Séries até a falha */}
+      {failureCount > 0 && (
+        <div
+          className="rounded-xl px-3 py-2.5 mb-4 flex items-center gap-2"
+          style={{ background: "rgba(239,68,68,0.08)", border: "0.5px solid rgba(239,68,68,0.25)" }}
+        >
+          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="#ef4444" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round" style={{ flexShrink: 0 }}>
+            <circle cx="12" cy="12" r="10"/><line x1="12" y1="8" x2="12" y2="12"/><line x1="12" y1="16" x2="12.01" y2="16"/>
+          </svg>
+          <span className="text-xs font-medium" style={{ color: "#ff8888" }}>
+            <strong>{failureCount}</strong> {failureCount === 1 ? "série levada" : "séries levadas"} à falha
+          </span>
+        </div>
+      )}
+
+      {/* Volume por grupo muscular na sessão (séries efetivas) */}
+      {Object.keys(volumeByMuscle).length > 0 && (
+        <>
+          <Eyebrow className="mb-2">Volume por músculo · esta sessão</Eyebrow>
+          <Card className="mb-4">
+            <div className="space-y-2.5">
+              {Object.entries(volumeByMuscle)
+                .sort(([, a], [, b]) => b - a)
+                .map(([muscle, sets]) => {
+                  const cls = classifyVolume(muscle, sets);
+                  const label = MUSCLE_LABELS[muscle] ?? muscle;
+                  return (
+                    <div key={muscle} className="flex items-center gap-3">
+                      <span className="text-sm font-medium flex-1 truncate">{label}</span>
+                      <span className="text-sm tabular font-bold" style={{ color: cls?.color ?? "var(--muted)" }}>
+                        {sets}
+                      </span>
+                      <span className="text-xs flex-shrink-0" style={{ color: "var(--faint)" }}>
+                        {sets === 1 ? "série" : "séries"}
+                      </span>
+                      {cls && (
+                        <span
+                          className="text-xs font-bold flex-shrink-0 px-2 py-0.5 rounded"
+                          style={{
+                            color: cls.color,
+                            background: `${cls.color}1a`,
+                            fontSize: 9,
+                            letterSpacing: "0.06em",
+                            textTransform: "uppercase",
+                          }}
+                        >
+                          {cls.label}
+                        </span>
+                      )}
+                    </div>
+                  );
+                })}
+            </div>
+            <div className="text-xs mt-3 pt-3" style={{ borderTop: "0.5px solid var(--border)", color: "var(--faint)" }}>
+              Faixas baseadas em MEV/MAV/MRV (Renaissance Periodization). São séries efetivas, não soma semanal.
+            </div>
+          </Card>
+        </>
+      )}
+
+      {/* Comparativo com última sessão do mesmo dia */}
+      {prevVolume && prevVolume.tonnage > 0 && (() => {
+        const deltaPct = ((tonnage - prevVolume.tonnage) / prevVolume.tonnage) * 100;
+        const deltaSets = allWorkingSets.length - prevVolume.sets;
+        const isUp = deltaPct >= 0;
+        const color = Math.abs(deltaPct) < 3 ? "var(--muted)" : isUp ? "var(--accent)" : "#ff8888";
+        return (
+          <Card className="mb-4">
+            <div className="flex items-center justify-between gap-3">
+              <div className="min-w-0">
+                <div className="text-xs font-bold mb-0.5" style={{ color: "var(--muted)", letterSpacing: "0.08em", textTransform: "uppercase" }}>
+                  vs última {prevVolume.dayName}
+                </div>
+                <div className="text-xs" style={{ color: "var(--faint)" }}>
+                  {fmtTonnage(prevVolume.tonnage)} · {prevVolume.sets} séries
+                </div>
+              </div>
+              <div className="text-right flex-shrink-0">
+                <div className="text-xl font-black tabular flex items-center gap-1" style={{ color }}>
+                  <span>{isUp ? "↑" : "↓"}</span>
+                  <span>{Math.abs(deltaPct).toFixed(0)}%</span>
+                </div>
+                {deltaSets !== 0 && (
+                  <div className="text-xs tabular" style={{ color: "var(--faint)" }}>
+                    {deltaSets > 0 ? "+" : ""}{deltaSets} {Math.abs(deltaSets) === 1 ? "série" : "séries"}
+                  </div>
+                )}
+              </div>
+            </div>
+          </Card>
+        );
+      })()}
+
+      {/* Seção de PRs */}
+      {prs.length > 0 && (
+        <div
+          className="rounded-xl p-4 mb-4"
+          style={{
+            background: "linear-gradient(135deg, rgba(251, 191, 36, 0.10) 0%, rgba(251, 191, 36, 0.04) 100%)",
+            border: "0.5px solid rgba(251, 191, 36, 0.28)",
+          }}
+        >
+          <div className="flex items-center gap-2 mb-3">
+            <TrophyIcon />
+            <span className="text-sm font-bold" style={{ color: "#fbbf24" }}>
+              {prs.length === 1 ? "Novo recorde pessoal!" : `${prs.length} novos recordes pessoais!`}
+            </span>
+          </div>
+          <div className="space-y-2.5">
+            {prs.map((pr) => (
+              <div key={pr.id} className="flex justify-between items-center">
+                <span className="text-sm font-medium">{pr.exercise.name}</span>
+                <div className="flex items-center gap-2">
+                  {pr.prevBest1RM > 0 && (
+                    <span className="text-xs" style={{ color: "var(--muted)" }}>
+                      +{fmtKg(pr.sessionBest.e1rm - pr.prevBest1RM)} kg
+                    </span>
+                  )}
+                  <span className="text-sm font-bold tabular" style={{ color: "#fbbf24" }}>
+                    {fmtKg(pr.sessionBest.e1rm)} e1RM
+                  </span>
+                </div>
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
+
+      {/* Lista de exercícios */}
+      <Eyebrow className="mb-2">Exercícios realizados</Eyebrow>
+      <Card className="mb-5 !p-0">
+        {summary.map((ex, idx) => {
+          const maxWeight =
+            ex.realSets.length > 0 ? Math.max(...ex.realSets.map((s) => s.weight_kg)) : 0;
+
+          return (
+            <div
+              key={ex.id}
+              className="flex items-center gap-3 px-4"
+              style={{
+                paddingTop: "12px",
+                paddingBottom: "12px",
+                borderTop: idx > 0 ? "0.5px solid var(--border)" : "none",
+              }}
+            >
+              {/* Número */}
+              <div
+                className="flex-shrink-0 rounded-md flex items-center justify-center font-bold text-xs"
+                style={{
+                  width: "24px",
+                  height: "24px",
+                  background: "rgba(152, 181, 210, 0.08)",
+                  color: "var(--primary)",
+                }}
+              >
+                {idx + 1}
+              </div>
+
+              {/* Nome + sets */}
+              <div className="flex-1 min-w-0">
+                <div className="flex items-center gap-1.5">
+                  <span className="text-sm font-medium truncate">{ex.exercise.name}</span>
+                  {ex.isPR && (
+                    <Pill variant="accent" className="flex-shrink-0">
+                      PR
+                    </Pill>
+                  )}
+                </div>
+                <div className="text-xs mt-0.5" style={{ color: "var(--muted)" }}>
+                  {ex.realSets.length} {ex.realSets.length === 1 ? "série" : "séries"}
+                  {ex.allSets.some((s) => s.is_warmup) && " + aquecimento"}
+                </div>
+              </div>
+
+              {/* Peso máximo */}
+              {maxWeight > 0 && (
+                <span className="text-sm tabular font-medium flex-shrink-0" style={{ color: "var(--muted)" }}>
+                  {fmtKg(maxWeight)} kg
+                </span>
+              )}
+            </div>
+          );
+        })}
+
+        {summary.length === 0 && (
+          <div className="px-4 py-6 text-center text-sm" style={{ color: "var(--muted)" }}>
+            Nenhum exercício registrado
+          </div>
+        )}
+      </Card>
+
+      {/* Botões de ação */}
+      <div className="flex gap-2">
+        <Link href="/" className="flex-1">
+          <Button variant="primary" fullWidth>
+            Início
+          </Button>
+        </Link>
+        <button
+          onClick={() => setShowEditModal(true)}
+          className="flex-1 rounded-lg font-bold text-sm"
+          style={{ background: "var(--surface-strong)", color: "var(--primary)", border: "0.5px solid var(--border-strong)", minHeight: "44px" }}
+        >
+          Editar
+        </button>
+        <button
+          onClick={handleReopen}
+          aria-label="Reabrir e editar treino"
+          title="Reabrir treino para edição completa (exercícios, séries, ordem)"
+          className="rounded-lg flex items-center justify-center"
+          style={{ width: 44, minHeight: 44, background: "var(--surface-strong)", color: "var(--accent)", border: "0.5px solid var(--border-strong)" }}
+        >
+          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+            <path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7"/>
+            <path d="M18.5 2.5a2.121 2.121 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z"/>
+          </svg>
+        </button>
+        <button
+          onClick={handleRepeat}
+          aria-label="Repetir este treino"
+          title="Criar nova sessão com os mesmos exercícios"
+          className="rounded-lg flex items-center justify-center"
+          style={{ width: 44, minHeight: 44, background: "var(--surface-strong)", color: "var(--primary)", border: "0.5px solid var(--border-strong)" }}
+        >
+          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+            <polyline points="1 4 1 10 7 10"/><path d="M3.51 15a9 9 0 1 0 2.13-9.36L1 10"/>
+          </svg>
+        </button>
+        <button
+          onClick={handleShare}
+          className="rounded-lg font-bold text-sm px-3"
+          style={{ background: "var(--surface-strong)", color: "var(--muted)", border: "0.5px solid var(--border)", minHeight: "44px" }}
+          title="Compartilhar"
+        >
+          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+            <circle cx="18" cy="5" r="3" /><circle cx="6" cy="12" r="3" /><circle cx="18" cy="19" r="3" />
+            <line x1="8.59" y1="13.51" x2="15.42" y2="17.49" /><line x1="15.41" y1="6.51" x2="8.59" y2="10.49" />
+          </svg>
+        </button>
+      </div>
+
+      <button onClick={handleDelete} className="text-xs mt-5 block mx-auto" style={{ color: "#ff8888", minHeight: "auto" }}>
+        Apagar treino
+      </button>
+
+      {showEditModal && session && (
+        <EditSessionModal
+          session={session}
+          onClose={() => setShowEditModal(false)}
+          onSaved={(updated) => {
+            setSession(updated);
+            setShowEditModal(false);
+          }}
+        />
+      )}
+    </div>
+  );
+}
+
+// ─── Modal de edição ────────────────────────────────────────────────────────
+
+const ENERGY_LABELS = ["", "Péssimo", "Ruim", "Ok", "Bom", "Ótimo"];
+const ENERGY_COLORS = ["", "#ef4444", "#f97316", "#eab308", "#22c55e", "#4493e0"];
+
+function EditSessionModal({
+  session,
+  onClose,
+  onSaved,
+}: {
+  session: WorkoutSession;
+  onClose: () => void;
+  onSaved: (updated: WorkoutSession) => void;
+}) {
+  const [energy, setEnergy] = useState<number | null>(session.energy_level ?? null);
+  const [notes, setNotes] = useState(session.notes ?? "");
+  const [bodyweight, setBodyweight] = useState(session.bodyweight_kg ? String(session.bodyweight_kg) : "");
+  const [saving, setSaving] = useState(false);
+
+  async function save() {
+    setSaving(true);
+    const bw = bodyweight ? parseFloat(bodyweight) : null;
+    const { data } = await supabase
+      .from("workout_sessions")
+      .update({
+        energy_level: energy,
+        notes: notes.trim() || null,
+        bodyweight_kg: bw && bw > 0 ? bw : null,
+      } as any)
+      .eq("id", session.id)
+      .select()
+      .single();
+    setSaving(false);
+    onSaved(data as WorkoutSession);
+  }
+
+  return (
+    <div
+      className="fixed inset-0 z-50 flex items-center justify-center p-4"
+      style={{ background: "rgba(4,6,7,0.82)", backdropFilter: "blur(10px)" }}
+      onClick={(e) => { if (e.target === e.currentTarget) onClose(); }}
+    >
+      <div
+        className="w-full max-w-sm rounded-2xl p-5 scale-in"
+        style={{ background: "var(--background)", border: "0.5px solid var(--border-strong)", maxHeight: "90vh", overflowY: "auto" }}
+        onClick={(e) => e.stopPropagation()}
+      >
+        <div className="flex justify-between items-start mb-4 gap-3">
+          <div>
+            <h2 className="text-base font-bold">Detalhes do treino</h2>
+            <p className="text-xs mt-0.5" style={{ color: "var(--faint)" }}>
+              Peso, energia e notas. Para editar séries use "Reabrir".
+            </p>
+          </div>
+          <button onClick={onClose} style={{ color: "var(--muted)", minHeight: "auto" }}>✕</button>
+        </div>
+
+        {/* Peso corporal */}
+        <label className="block text-xs font-bold mb-1" style={{ color: "var(--muted)", letterSpacing: "0.08em", textTransform: "uppercase" }}>
+          Peso corporal (kg)
+        </label>
+        <input
+          type="number"
+          inputMode="decimal"
+          value={bodyweight}
+          onChange={(e) => setBodyweight(e.target.value)}
+          placeholder="Ex: 80.5"
+          step="0.1"
+          className="w-full rounded-lg px-3 py-2.5 text-sm mb-4 text-center font-bold"
+          style={{ background: "var(--surface)", border: "0.5px solid var(--border)", color: "var(--text)", outline: "none" }}
+        />
+
+        {/* Energia */}
+        <label className="block text-xs font-bold mb-2" style={{ color: "var(--muted)", letterSpacing: "0.08em", textTransform: "uppercase" }}>
+          Energia
+        </label>
+        <div className="flex gap-1.5 mb-4">
+          {[1, 2, 3, 4, 5].map((i) => (
+            <button
+              key={i}
+              onClick={() => setEnergy(energy === i ? null : i)}
+              className="flex-1 rounded-xl font-bold flex flex-col items-center justify-center gap-0.5"
+              style={{
+                minHeight: "56px",
+                background: energy === i ? `${ENERGY_COLORS[i]}22` : "var(--surface)",
+                border: `1px solid ${energy === i ? ENERGY_COLORS[i] : "var(--border)"}`,
+                color: energy === i ? ENERGY_COLORS[i] : "var(--muted)",
+                transition: "all 0.15s ease",
+                cursor: "pointer",
+              }}
+            >
+              <span style={{ fontSize: 18, fontWeight: 800, lineHeight: 1 }}>{i}</span>
+              <span style={{ fontSize: 8, letterSpacing: "0.04em", opacity: 0.8 }}>{ENERGY_LABELS[i]}</span>
+            </button>
+          ))}
+        </div>
+
+        {/* Notas */}
+        <label className="block text-xs font-bold mb-1" style={{ color: "var(--muted)", letterSpacing: "0.08em", textTransform: "uppercase" }}>
+          Notas
+        </label>
+        <textarea
+          value={notes}
+          onChange={(e) => setNotes(e.target.value)}
+          rows={3}
+          placeholder="Como foi o treino?"
+          className="w-full rounded-lg px-3 py-2.5 text-sm mb-4 resize-none"
+          style={{ background: "var(--surface)", border: "0.5px solid var(--border)", color: "var(--text)", outline: "none" }}
+        />
+
+        <Button fullWidth onClick={save} disabled={saving}>
+          {saving ? "Salvando..." : "Salvar"}
+        </Button>
+      </div>
+    </div>
+  );
+}
+
+// ─── Componentes auxiliares ─────────────────────────────────────────────────
+
+function Stat({ label, value }: { label: string; value: string }) {
+  return (
+    <div>
+      <div
+        className="text-xs font-bold mb-1"
+        style={{ color: "var(--muted)", letterSpacing: "0.08em", textTransform: "uppercase" }}
+      >
+        {label}
+      </div>
+      <div className="text-xl font-bold tabular">{value}</div>
+    </div>
+  );
+}
+
+function CheckIcon() {
+  return (
+    <svg width="28" height="28" viewBox="0 0 24 24" fill="none">
+      <polyline
+        points="20 6 9 17 4 12"
+        stroke="var(--primary)"
+        strokeWidth="2.5"
+        strokeLinecap="round"
+        strokeLinejoin="round"
+      />
+    </svg>
+  );
+}
+
+function TrophyIcon() {
+  return (
+    <svg width="18" height="18" viewBox="0 0 24 24" fill="none">
+      <path
+        d="M8 21h8M12 17v4M17 3H7L8.5 10.5A4.5 4.5 0 0 0 12 14a4.5 4.5 0 0 0 3.5-3.5L17 3Z"
+        stroke="#fbbf24"
+        strokeWidth="1.75"
+        strokeLinecap="round"
+        strokeLinejoin="round"
+      />
+      <path
+        d="M7 3H4a1 1 0 0 0-1 1v1a4 4 0 0 0 4 4M17 3h3a1 1 0 0 1 1 1v1a4 4 0 0 1-4 4"
+        stroke="#fbbf24"
+        strokeWidth="1.75"
+        strokeLinecap="round"
+        strokeLinejoin="round"
+      />
+    </svg>
+  );
+}

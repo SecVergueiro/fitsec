@@ -6,7 +6,7 @@ import { supabase } from "@/lib/supabase";
 import { Card, Eyebrow, Pill } from "@/components/ui";
 import { detectPlateau, fmtRelativeDate, getStreakMilestone, WEEKDAY_LABELS } from "@/lib/utils";
 import { useProfile } from "@/components/ProfileProvider";
-import { offlineRead } from "@/lib/offline-reads";
+import { offlineRead, offlineReadList } from "@/lib/offline-reads";
 import { db as offlineDB } from "@/lib/offline-db";
 import type { Mesocycle, Template, TemplateDay, WorkoutSession } from "@/lib/database.types";
 
@@ -129,13 +129,14 @@ export default function HomePage() {
       setTodayDay(today);
 
       async function countTplExs(dayId: string): Promise<number> {
-        try {
-          const { count } = await supabase.from("template_exercises").select("*", { count: "exact", head: true }).eq("template_day_id", dayId);
-          return count ?? 0;
-        } catch {
-          if (offlineDB) return offlineDB.template_exercises.where("template_day_id").equals(dayId).count();
-          return 0;
-        }
+        // `count: exact` não passa pelo offlineRead (devolve count, não data),
+        // e o catch nunca dispara — o supabase-js resolve com { data, error }.
+        const rows = await offlineReadList<{ id: string }>(
+          () => supabase.from("template_exercises").select("id").eq("template_day_id", dayId),
+          async () =>
+            offlineDB ? offlineDB.template_exercises.where("template_day_id").equals(dayId).toArray() : null
+        );
+        return rows.length;
       }
 
       if (today) {
@@ -304,7 +305,7 @@ export default function HomePage() {
 
       {/* Sessão em andamento — aparece se há treino ativo */}
       {!loading && activeSession && (
-        <Link href={`/sessao/${activeSession.id}`}>
+        <Link href={`/sessao/ativa?id=${activeSession.id}`}>
           <div
             className="rounded-xl p-4 mb-4 flex items-center justify-between"
             style={{ border: "0.5px solid var(--accent)", background: "rgba(68, 147, 224, 0.07)" }}

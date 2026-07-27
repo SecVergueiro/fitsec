@@ -3,6 +3,7 @@
 import { useEffect, useState } from "react";
 import Link from "next/link";
 import { supabase } from "@/lib/supabase";
+import { offlineUpdate } from "@/lib/offline-writes";
 import { Card, Eyebrow, PageHeader, Pill } from "@/components/ui";
 import { Button, Spinner } from "@/components/Button";
 import { weekNumber } from "@/lib/utils";
@@ -39,10 +40,22 @@ export default function TreinosPage() {
   }
 
   async function setTemplateActive(templateId: string) {
-    // Desativa todos os outros
-    await supabase.from("templates").update({ is_active: false } as any).neq("id", templateId);
-    // Ativa o selecionado
-    await supabase.from("templates").update({ is_active: true } as any).eq("id", templateId);
+    // Um update por linha: a fila offline só sabe casar com `.eq`, então um
+    // `.neq("id", ...)` não teria como ser reproduzido na sincronização.
+    await Promise.all(
+      templates
+        .filter((t) => t.id !== templateId && t.is_active)
+        .map((t) =>
+          offlineUpdate("templates", { is_active: false }, { id: t.id }, {
+            localTable: "templates",
+            localId: t.id,
+          })
+        )
+    );
+    await offlineUpdate("templates", { is_active: true }, { id: templateId }, {
+      localTable: "templates",
+      localId: templateId,
+    });
     loadData();
   }
 
@@ -115,7 +128,7 @@ export default function TreinosPage() {
       ) : (
         <div className="space-y-2">
           {templates.map((tpl) => (
-            <Link key={tpl.id} href={`/treinos/template/${tpl.id}`}>
+            <Link key={tpl.id} href={`/treinos/template?id=${tpl.id}`}>
               <Card className="!p-3 mb-2">
                 <div className="flex justify-between items-start">
                   <div className="flex-1 min-w-0">

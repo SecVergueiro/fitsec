@@ -1,7 +1,8 @@
 "use client";
 
 import { useState } from "react";
-import { supabase } from "@/lib/supabase";
+import { getCurrentUserId } from "@/lib/supabase";
+import { offlineInsert, describeWriteError } from "@/lib/offline-writes";
 import { Card, Eyebrow } from "@/components/ui";
 import { Select } from "@/components/Select";
 import { MUSCLE_LABELS, EQUIPMENT_LABELS } from "@/lib/utils";
@@ -53,7 +54,8 @@ export function NewExerciseModal({ onClose, onCreated, existingExercises }: Prop
     setError(null);
     setSaving(true);
 
-    const { data: { user } } = await supabase.auth.getUser();
+    // user_id vem da sessão persistida: auth.getUser() bate na rede e devolve null offline
+    const userId = getCurrentUserId();
     const payload: Partial<Exercise> = {
       name: name.trim(),
       primary_muscle: primaryMuscle,
@@ -63,16 +65,19 @@ export function NewExerciseModal({ onClose, onCreated, existingExercises }: Prop
       parent_exercise_id: parentId || null,
       variation_label: parentId ? variationLabel.trim() || null : null,
       secondary_muscles: [],
-      user_id: user?.id,
+      user_id: userId,
     } as any;
 
-    const { error: err } = await supabase.from("exercises").insert(payload);
-
-    setSaving(false);
-    if (err) {
-      setError(err.message);
+    try {
+      await offlineInsert("exercises", payload as any, { localTable: "exercises" });
+    } catch (err: any) {
+      // Só chega aqui em recusa definitiva do servidor; falha de rede vai pra fila
+      setSaving(false);
+      setError(describeWriteError(err));
       return;
     }
+
+    setSaving(false);
     onCreated();
   }
 

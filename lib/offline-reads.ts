@@ -1,6 +1,10 @@
 // Helpers de leitura offline-first.
-// Padrão: detecta offline → vai direto pro Dexie. Online → tenta Supabase,
-// se falhar (timeout, network error) também cai pro Dexie.
+//
+// IMPORTANTE — por que não dá pra usar try/catch com o supabase-js:
+// em erro de rede o PostgrestBuilder **resolve** com `{ data: null, error }`
+// em vez de rejeitar. Todo bloco `try { await supabase.from(...) } catch { ... }`
+// é código morto: o catch nunca dispara e a tela fica vazia offline.
+// Sempre passe a query por `offlineRead`, que inspeciona `error` explicitamente.
 "use client";
 
 const NETWORK_TIMEOUT_MS = 6000;
@@ -9,19 +13,49 @@ function isOnline(): boolean {
   return typeof navigator === "undefined" || navigator.onLine;
 }
 
+function isEmpty(value: unknown): boolean {
+  return value == null || (Array.isArray(value) && value.length === 0);
+}
+
+interface OfflineReadOptions {
+  /**
+   * Lê o cache local primeiro e só consulta o servidor se ele não tiver nada.
+   *
+   * Use quando houver mutações na fila: o servidor ainda não conhece a sessão
+   * criada offline e responderia `[]`, apagando da tela séries que existem
+   * localmente — e levando o usuário a registrá-las de novo.
+   */
+  preferLocal?: boolean;
+}
+
 /**
- * Tenta executar a query online primeiro. Se offline ou erro, usa fallback.
+ * Lê do Supabase com fallback para o cache local (Dexie).
  *
- * @param online função que retorna { data, error } do Supabase
- * @param offline função que retorna dados do Dexie
+ * Cai para o cache quando: está offline, a query devolveu `error` (inclui falha
+ * de rede e timeout) ou o servidor não tem a linha.
+ *
+ * @param online  função que devolve `{ data, error }` do Supabase
+ * @param offline função que devolve os dados do Dexie
  */
 export async function offlineRead<T>(
   online: () => PromiseLike<{ data: T | null; error?: unknown }>,
-  offline: () => Promise<T | null>
+  offline: () => Promise<T | null>,
+  options: OfflineReadOptions = {}
 ): Promise<T | null> {
-  if (!isOnline()) {
-    try { return await offline(); } catch { return null; }
+  const readLocal = async (): Promise<T | null> => {
+    try {
+      return await offline();
+    } catch {
+      return null;
+    }
+  };
+
+  if (options.preferLocal) {
+    const local = await readLocal();
+    if (!isEmpty(local)) return local;
   }
+
+  if (!isOnline()) return readLocal();
 
   try {
     const result = await Promise.race([
@@ -33,10 +67,19 @@ export async function offlineRead<T>(
     if ((result as any).error) throw (result as any).error;
     if (result.data == null) {
       // Sem dados online — talvez tenha cache local
-      try { return await offline(); } catch { return null; }
+      return readLocal();
     }
     return result.data;
   } catch {
-    try { return await offline(); } catch { return null; }
+    return readLocal();
   }
+}
+
+/** Igual ao offlineRead, mas devolve `[]` em vez de null — evita `?? []` no chamador. */
+export async function offlineReadList<T>(
+  online: () => PromiseLike<{ data: T[] | null; error?: unknown }>,
+  offline: () => Promise<T[] | null>,
+  options: OfflineReadOptions = {}
+): Promise<T[]> {
+  return (await offlineRead<T[]>(online, offline, options)) ?? [];
 }

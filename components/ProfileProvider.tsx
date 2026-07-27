@@ -3,6 +3,8 @@
 import { createContext, useContext, useEffect, useState, ReactNode, useCallback } from "react";
 import { supabase } from "@/lib/supabase";
 import { useAuth } from "./AuthProvider";
+import { db as offlineDB } from "@/lib/offline-db";
+import { offlineUpdate } from "@/lib/offline-writes";
 import type { UserProfile } from "@/lib/database.types";
 
 const DEFAULT_PROFILE: Omit<UserProfile, "user_id" | "created_at" | "updated_at"> = {
@@ -45,22 +47,40 @@ export function ProfileProvider({ children }: { children: ReactNode }) {
       return;
     }
     setLoading(true);
+
+    // Cache local primeiro — offline é a única fonte que responde
+    const cached = offlineDB
+      ? await offlineDB.user_profile.get(user.id).catch(() => undefined)
+      : undefined;
+    if (cached) {
+      setProfile(cached as UserProfile);
+      setLoading(false);
+    }
+
     const { data, error } = await supabase
       .from("user_profiles")
       .select("*")
       .eq("user_id", user.id)
       .maybeSingle();
 
-    if (error || !data) {
-      // Profile não existe — cria com defaults (caso o trigger não tenha rodado)
+    if (data) {
+      setProfile(data as UserProfile);
+      if (offlineDB) await offlineDB.user_profile.put(data as any).catch(() => {});
+    } else if (error) {
+      // Erro de rede: o supabase-js resolve com { data: null, error } em vez de
+      // rejeitar. Antes isso caía no insert abaixo e tentava recriar o profile.
+      if (!cached) setProfile(null);
+    } else {
+      // Sem erro e sem linha: o profile realmente não existe (trigger não rodou)
       const { data: created } = await supabase
         .from("user_profiles")
         .insert({ user_id: user.id, ...DEFAULT_PROFILE } as any)
         .select()
         .single();
-      setProfile(created as UserProfile);
-    } else {
-      setProfile(data as UserProfile);
+      if (created) {
+        setProfile(created as UserProfile);
+        if (offlineDB) await offlineDB.user_profile.put(created as any).catch(() => {});
+      }
     }
     setLoading(false);
   }, [user]);
@@ -73,7 +93,11 @@ export function ProfileProvider({ children }: { children: ReactNode }) {
     if (!user || !profile) return;
     // Atualização otimista
     setProfile({ ...profile, ...patch, updated_at: new Date().toISOString() });
-    await supabase.from("user_profiles").update(patch as any).eq("user_id", user.id);
+    // offlineUpdate grava no Dexie e enfileira quando não há rede
+    await offlineUpdate("user_profiles", patch as any, { user_id: user.id }, {
+      localTable: "user_profile",
+      localId: user.id,
+    });
   }
 
   async function setRestOverride(exerciseId: string, seconds: number) {

@@ -8,6 +8,7 @@ import { Spinner } from "@/components/Button";
 import { useConfirm } from "@/components/Toast";
 import { estimate1RM, fmtDuration, fmtTonnage } from "@/lib/utils";
 import { offlineRead } from "@/lib/offline-reads";
+import { offlineDelete } from "@/lib/offline-writes";
 import { db as offlineDB } from "@/lib/offline-db";
 import type { WorkoutSession } from "@/lib/database.types";
 
@@ -44,9 +45,14 @@ export default function HistoricoPage() {
       danger: true,
     });
     if (!ok) return;
-    await supabase.from("session_sets").delete().eq("session_id", id);
-    await supabase.from("session_exercises").delete().eq("session_id", id);
-    await supabase.from("workout_sessions").delete().eq("id", id);
+    // Apaga também o espelho local, senão a sessão reaparece na tela offline
+    if (offlineDB) {
+      await offlineDB.session_sets.where("session_id").equals(id).delete().catch(() => 0);
+      await offlineDB.session_exercises.where("session_id").equals(id).delete().catch(() => 0);
+    }
+    await offlineDelete("session_sets", { session_id: id });
+    await offlineDelete("session_exercises", { session_id: id });
+    await offlineDelete("workout_sessions", { id }, { localTable: "workout_sessions", localId: id });
     load();
   }
 
@@ -324,7 +330,7 @@ export default function HistoricoPage() {
                     </div>
 
                     {/* Info */}
-                    <Link href={`/sessao/${s.id}/resumo`} className="flex-1 min-w-0">
+                    <Link href={`/sessao/resumo?id=${s.id}`} className="flex-1 min-w-0">
                       <div className="flex items-center gap-1.5">
                         <span className="font-medium text-sm truncate">{(s as any).custom_name || s.day_name || "Treino livre"}</span>
                         {s.hasPR && (
@@ -359,7 +365,7 @@ export default function HistoricoPage() {
                     {/* Ações */}
                     <div className="flex items-center gap-1 flex-shrink-0">
                       <Link
-                        href={`/sessao/${s.id}/resumo`}
+                        href={`/sessao/resumo?id=${s.id}`}
                         className="rounded-md flex items-center justify-center"
                         style={{ width: 32, height: 32, minHeight: 32, color: "var(--accent)" }}
                         aria-label="Ver resumo"
@@ -462,7 +468,7 @@ function CalendarView({ sessions }: { sessions: SessionWithDay[] }) {
 
           if (session) {
             return (
-              <Link key={day} href={`/sessao/${session.id}/resumo`}>
+              <Link key={day} href={`/sessao/resumo?id=${session.id}`}>
                 <div
                   className="aspect-square rounded-md flex items-center justify-center text-xs font-bold relative cursor-pointer"
                   style={{

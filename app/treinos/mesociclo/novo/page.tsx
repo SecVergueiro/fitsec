@@ -3,7 +3,10 @@
 import { useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
 import Link from "next/link";
-import { supabase } from "@/lib/supabase";
+import { supabase, getCurrentUserId } from "@/lib/supabase";
+import { offlineInsert, offlineUpdate, describeWriteError } from "@/lib/offline-writes";
+import { offlineReadList } from "@/lib/offline-reads";
+import { db as offlineDB } from "@/lib/offline-db";
 import { Card, Eyebrow, PageHeader } from "@/components/ui";
 import { Button, Input } from "@/components/Button";
 import { Select } from "@/components/Select";
@@ -22,15 +25,13 @@ export default function NovoMesociclo() {
   const [error, setError] = useState<string | null>(null);
 
   useEffect(() => {
-    supabase
-      .from("templates")
-      .select("*")
-      .order("is_active", { ascending: false })
-      .then(({ data }) => {
-        const tpls = (data as Template[]) ?? [];
-        setTemplates(tpls);
-        if (tpls.length > 0) setTemplateId(tpls[0].id);
-      });
+    offlineReadList<Template>(
+      () => supabase.from("templates").select("*").order("is_active", { ascending: false }),
+      async () => (offlineDB ? offlineDB.templates.toArray() : null)
+    ).then((tpls) => {
+      setTemplates(tpls);
+      if (tpls.length > 0) setTemplateId(tpls[0].id);
+    });
   }, []);
 
   async function save() {
@@ -41,30 +42,49 @@ export default function NovoMesociclo() {
     setSaving(true);
     setError(null);
 
-    // Desativa outros mesociclos
-    await supabase.from("mesocycles").update({ is_active: false } as any).eq("is_active", true);
+    // Desativa outros mesociclos — um update por linha, porque a fila offline
+    // só sabe reproduzir match por `.eq` em id
+    const ativos = await offlineReadList<{ id: string }>(
+      () => supabase.from("mesocycles").select("id").eq("is_active", true),
+      async () => {
+        if (!offlineDB) return null;
+        const list = await offlineDB.mesocycles.filter((m) => (m as any).is_active === true).toArray();
+        return list.map((m) => ({ id: m.id }));
+      }
+    );
+    await Promise.all(
+      ativos.map((m) =>
+        offlineUpdate("mesocycles", { is_active: false }, { id: m.id }, {
+          localTable: "mesocycles",
+          localId: m.id,
+        })
+      )
+    );
 
-    const { data: { user } } = await supabase.auth.getUser();
-    const { data, error: err } = await supabase
-      .from("mesocycles")
-      .insert({
-        template_id: templateId,
-        name: name.trim(),
-        start_date: startDate,
-        total_weeks: parseInt(totalWeeks),
-        deload_week: deloadWeek ? parseInt(deloadWeek) : null,
-        goal: goal.trim() || null,
-        is_active: true,
-        user_id: user?.id,
-      } as any)
-      .select()
-      .single();
-
-    setSaving(false);
-    if (err) {
-      setError(err.message);
+    // user_id vem da sessão persistida: auth.getUser() bate na rede e devolve null offline
+    const userId = getCurrentUserId();
+    try {
+      await offlineInsert(
+        "mesocycles",
+        {
+          template_id: templateId,
+          name: name.trim(),
+          start_date: startDate,
+          total_weeks: parseInt(totalWeeks),
+          deload_week: deloadWeek ? parseInt(deloadWeek) : null,
+          goal: goal.trim() || null,
+          is_active: true,
+          user_id: userId,
+        },
+        { localTable: "mesocycles" }
+      );
+    } catch (err: any) {
+      setSaving(false);
+      setError(describeWriteError(err));
       return;
     }
+
+    setSaving(false);
     router.push("/treinos/mesociclo");
   }
 
