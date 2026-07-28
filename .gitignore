@@ -9,3 +9,6 @@ node_modules/
 # Claude Code / harness — local only
 .claude/
 tsconfig.tsbuildinfo
+
+# Build dos testes (gerado por npm run pretest)
+.test-build/

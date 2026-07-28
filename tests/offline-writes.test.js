@@ -1,0 +1,119 @@
+// Política de erro das escritas.
+//
+// Falha transitória (rede, timeout, 401, 5xx) vai pra fila. Recusa definitiva
+// do servidor (constraint, coluna inválida) estoura pra UI: enfileirar isso
+// fazia o registro sumir em silêncio depois de MAX_RETRIES tentativas.
+
+const { test, beforeEach } = require("node:test");
+const assert = require("node:assert/strict");
+const { setNavigator, stubSupabase, load } = require("./helpers/setup");
+
+setNavigator({ onLine: true });
+const servidor = stubSupabase();
+
+// Dexie e a fila entram por conta própria nos outros testes; aqui isolamos a
+// política de erro, então o espelho local e a fila são fakes simples.
+const enfileirados = [];
+const localTable = new Map();
+require.cache[require.resolve("../.test-build/offline-db.js")] = {
+  id: "offline-db", filename: require.resolve("../.test-build/offline-db.js"), loaded: true,
+  exports: {
+    db: {
+      exercises: {
+        put: async (r) => localTable.set(r.id, r),
+        delete: async (id) => localTable.delete(id),
+        get: async (id) => localTable.get(id),
+      },
+    },
+  },
+};
+require.cache[require.resolve("../.test-build/sync-engine.js")] = {
+  id: "sync-engine", filename: require.resolve("../.test-build/sync-engine.js"), loaded: true,
+  exports: {
+    enqueue: async (table, op, payload, match) => { enfileirados.push({ table, op, payload, match }); },
+    flushQueue: async () => ({ flushed: 0, failed: 0 }),
+  },
+};
+
+const { offlineInsert, offlineUpdate, offlineDelete, ServerRejectedError } = load("offline-writes");
+
+const REDE = { message: "TypeError: Failed to fetch", status: 0 };
+const TIMEOUT = { message: "AbortError: The operation was aborted", status: 0 };
+const TOKEN_VENCIDO = { message: "JWT expired", status: 401, code: "PGRST301" };
+const SERVIDOR_FORA = { message: "Bad gateway", status: 502 };
+const CONSTRAINT = { message: "duplicate key value violates unique constraint", status: 409, code: "23505" };
+const COLUNA_INVALIDA = { message: "column x does not exist", status: 400, code: "42703" };
+
+beforeEach(() => {
+  servidor.reset();
+  enfileirados.length = 0;
+  localTable.clear();
+  setNavigator({ onLine: true });
+});
+
+async function inserir(erro) {
+  servidor.estado.erroForcado = erro;
+  return offlineInsert("exercises", { name: "Supino" }, { localTable: "exercises" });
+}
+
+for (const [nome, erro] of [
+  ["falha de rede", REDE],
+  ["timeout/abort", TIMEOUT],
+  ["401 token vencido", TOKEN_VENCIDO],
+  ["502 servidor fora", SERVIDOR_FORA],
+]) {
+  test(`insert · ${nome} → fila, sem erro na UI`, async () => {
+    const r = await inserir(erro);
+    assert.ok(r.id, "devolve o registro com id local");
+    assert.equal(enfileirados.length, 1);
+    assert.equal(localTable.size, 1, "mantém no cache local");
+  });
+}
+
+for (const [nome, erro] of [
+  ["409 constraint duplicada", CONSTRAINT],
+  ["400 coluna inválida", COLUNA_INVALIDA],
+]) {
+  test(`insert · ${nome} → erro na UI, sem fila`, async () => {
+    await assert.rejects(() => inserir(erro), ServerRejectedError);
+    assert.equal(enfileirados.length, 0);
+    assert.equal(localTable.size, 0, "desfaz o registro local");
+  });
+}
+
+test("insert · sucesso não enfileira", async () => {
+  const r = await inserir(null);
+  assert.equal(enfileirados.length, 0);
+  assert.equal(servidor.estado.recebidos.length, 1);
+  assert.ok(r.id);
+});
+
+test("insert · offline enfileira com id local", async () => {
+  setNavigator({ onLine: false });
+  const r = await offlineInsert("exercises", { name: "Agachamento" }, { localTable: "exercises" });
+  assert.equal(enfileirados.length, 1);
+  assert.ok(r.id);
+  assert.equal(servidor.estado.recebidos.length, 0);
+});
+
+test("update segue a mesma política", async () => {
+  servidor.estado.erroForcado = REDE;
+  await offlineUpdate("exercises", { name: "x" }, { id: "1" });
+  assert.equal(enfileirados.length, 1);
+
+  enfileirados.length = 0;
+  servidor.estado.erroForcado = CONSTRAINT;
+  await assert.rejects(() => offlineUpdate("exercises", { name: "x" }, { id: "1" }), ServerRejectedError);
+  assert.equal(enfileirados.length, 0);
+});
+
+test("delete segue a mesma política", async () => {
+  servidor.estado.erroForcado = REDE;
+  await offlineDelete("exercises", { id: "1" });
+  assert.equal(enfileirados.length, 1);
+
+  enfileirados.length = 0;
+  servidor.estado.erroForcado = COLUNA_INVALIDA;
+  await assert.rejects(() => offlineDelete("exercises", { id: "1" }), ServerRejectedError);
+  assert.equal(enfileirados.length, 0);
+});

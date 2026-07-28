@@ -1,0 +1,17 @@
+{
+  // Compila só lib/ para CommonJS em .test-build/, que é o que os testes
+  // em tests/ carregam. Gerado por `npm run pretest`.
+  "extends": "./tsconfig.json",
+  "compilerOptions": {
+    "noEmit": false,
+    "incremental": false,
+    "outDir": ".test-build",
+    "rootDir": "lib",
+    "module": "commonjs",
+    "moduleResolution": "node",
+    "target": "ES2020",
+    "declaration": false
+  },
+  "include": ["lib/**/*.ts"],
+  "exclude": ["node_modules"]
+}
