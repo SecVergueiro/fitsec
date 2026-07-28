@@ -1,0 +1,37 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  build-e-testes:
+    runs-on: ubuntu-latest
+
+    env:
+      # O build não precisa de banco: lib/supabase.ts cai em placeholders quando
+      # as variáveis faltam, e toda chamada de rede está em useEffect, que não
+      # roda na prerenderização. Os testes usam um servidor falso.
+      NEXT_PUBLIC_SUPABASE_URL: https://placeholder.supabase.co
+      NEXT_PUBLIC_SUPABASE_ANON_KEY: placeholder-key
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          # Mesma major usada no desenvolvimento: `node --test` só aceita glob
+          # a partir do Node 21, e é assim que a suíte é invocada.
+          node-version: "24"
+          cache: npm
+
+      - run: npm ci
+
+      # Precisa vir antes dos testes: precache.test.js e sw-offline.test.js
+      # leem .next e o public/sw.js gerado por este build.
+      - name: Build
+        run: npm run build
+
+      - name: Testes
+        run: npm test
