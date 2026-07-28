@@ -3,6 +3,7 @@
 import { useEffect, useState } from "react";
 import Link from "next/link";
 import { supabase } from "@/lib/supabase";
+import { offlineUpdate } from "@/lib/offline-writes";
 import { Card, Eyebrow, PageHeader, Pill } from "@/components/ui";
 import { Button, Spinner } from "@/components/Button";
 import { useConfirm } from "@/components/Toast";
@@ -75,10 +76,12 @@ export default function MesocicloPage() {
       danger: true,
     });
     if (!ok) return;
-    await supabase
-      .from("mesocycles")
-      .update({ is_active: false, end_date: new Date().toISOString().slice(0, 10) } as any)
-      .eq("id", meso.id);
+    await offlineUpdate(
+      "mesocycles",
+      { is_active: false, end_date: new Date().toISOString().slice(0, 10) },
+      { id: meso.id },
+      { localTable: "mesocycles", localId: meso.id }
+    );
     load();
   }
 

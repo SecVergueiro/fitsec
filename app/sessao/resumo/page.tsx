@@ -768,18 +768,18 @@ function EditSessionModal({
   async function save() {
     setSaving(true);
     const bw = bodyweight ? parseFloat(bodyweight) : null;
-    const { data } = await supabase
-      .from("workout_sessions")
-      .update({
-        energy_level: energy,
-        notes: notes.trim() || null,
-        bodyweight_kg: bw && bw > 0 ? bw : null,
-      } as any)
-      .eq("id", session.id)
-      .select()
-      .single();
+    const patch = {
+      energy_level: energy,
+      notes: notes.trim() || null,
+      bodyweight_kg: bw && bw > 0 ? bw : null,
+    };
+    await offlineUpdate("workout_sessions", patch, { id: session.id }, {
+      localTable: "workout_sessions",
+      localId: session.id,
+    });
     setSaving(false);
-    onSaved(data as WorkoutSession);
+    // Antes passava o `data` do servidor, que offline vinha null e zerava a tela
+    onSaved({ ...session, ...patch } as WorkoutSession);
   }
 
   return (

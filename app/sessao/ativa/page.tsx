@@ -12,6 +12,7 @@ import { offlineInsert, offlineUpdate, offlineDelete } from "@/lib/offline-write
 import { offlineRead, offlineReadList } from "@/lib/offline-reads";
 import { pendingCount } from "@/lib/sync-engine";
 import { db as offlineDB } from "@/lib/offline-db";
+import { armRestAlert, playRestAlert, acquireWakeLock, releaseWakeLock, hasWakeLock } from "@/lib/rest-alert";
 import { useProfile } from "@/components/ProfileProvider";
 import type { Exercise, SessionExercise, SessionSet, WorkoutSession } from "@/lib/database.types";
 import { AddExerciseToSessionModal } from "./AddExerciseModal";
@@ -435,6 +436,14 @@ function SessaoAtivaPage() {
     }
   }
 
+  // Destrava o áudio no primeiro toque da tela. Tem que ser dentro de um gesto
+  // do usuário: se esperarmos a hora do bipe, o iOS mantém o contexto suspenso.
+  useEffect(() => {
+    const arm = () => armRestAlert();
+    window.addEventListener("pointerdown", arm, { once: true });
+    return () => window.removeEventListener("pointerdown", arm);
+  }, []);
+
   function startRestTimer(seconds: number) {
     if (restRef.current) clearInterval(restRef.current);
     // Timestamp absoluto — funciona mesmo com tela apagada / app em background
@@ -447,7 +456,14 @@ function SessaoAtivaPage() {
   // Tick do rest timer baseado em endAt
   useEffect(() => {
     if (restRef.current) clearInterval(restRef.current);
-    if (restEndAt == null) return;
+    if (restEndAt == null) {
+      releaseWakeLock();
+      return;
+    }
+
+    // Mantém a tela acesa durante o descanso: com o iPhone bloqueado o
+    // AudioContext é suspenso e o bipe nunca sai.
+    acquireWakeLock();
 
     let alerted = false;
     function tick() {
@@ -457,10 +473,11 @@ function SessaoAtivaPage() {
         if (restRef.current) clearInterval(restRef.current);
         if (!alerted) {
           alerted = true;
-          if ("vibrate" in navigator) navigator.vibrate([200, 100, 200]);
+          playRestAlert(); // bipe + vibração (a vibração é no-op no iOS)
         }
         setRestRemaining(null);
         setRestEndAt(null);
+        releaseWakeLock();
         return;
       }
       setRestRemaining(remaining);
@@ -469,12 +486,18 @@ function SessaoAtivaPage() {
     tick();
     restRef.current = setInterval(tick, 500);
 
-    function onVisible() { if (!document.hidden) tick(); }
+    function onVisible() {
+      if (document.hidden) return;
+      tick();
+      // O sistema solta o wake lock ao esconder a aba — reobtém se ainda conta
+      if (restEndAt != null && !hasWakeLock()) acquireWakeLock();
+    }
     document.addEventListener("visibilitychange", onVisible);
 
     return () => {
       if (restRef.current) clearInterval(restRef.current);
       document.removeEventListener("visibilitychange", onVisible);
+      releaseWakeLock();
     };
   }, [restEndAt]);
 
@@ -1836,14 +1859,17 @@ function SessionInfoModal({
   async function save() {
     setSaving(true);
     const bw = bodyweight ? parseFloat(bodyweight) : null;
-    const { data } = await supabase
-      .from("workout_sessions")
-      .update({ energy_level: energy, notes: notes.trim() || null, bodyweight_kg: bw && bw > 0 ? bw : null } as any)
-      .eq("id", session.id)
-      .select()
-      .single();
+    const patch = {
+      energy_level: energy,
+      notes: notes.trim() || null,
+      bodyweight_kg: bw && bw > 0 ? bw : null,
+    };
+    await offlineUpdate("workout_sessions", patch, { id: session.id }, {
+      localTable: "workout_sessions",
+      localId: session.id,
+    });
     setSaving(false);
-    if (data) onSaved(data as WorkoutSession);
+    onSaved({ ...session, ...patch } as WorkoutSession);
   }
 
   return (
