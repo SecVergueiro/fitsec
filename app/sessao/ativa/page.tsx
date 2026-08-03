@@ -13,6 +13,7 @@ import { offlineRead, offlineReadList } from "@/lib/offline-reads";
 import { pendingCount } from "@/lib/sync-engine";
 import { db as offlineDB } from "@/lib/offline-db";
 import { armRestAlert, playRestAlert, acquireWakeLock, releaseWakeLock, hasWakeLock } from "@/lib/rest-alert";
+import { saveRest, loadRest, clearRest, saveActiveIdx, loadActiveIdx, clearSessionState } from "@/lib/session-timer";
 import { useProfile } from "@/components/ProfileProvider";
 import type { Exercise, SessionExercise, SessionSet, WorkoutSession } from "@/lib/database.types";
 import { AddExerciseToSessionModal } from "./AddExerciseModal";
@@ -228,8 +229,17 @@ function SessaoAtivaPage() {
 
     setExercises(enriched);
 
+    // Depois de um restart do iOS, reabre no exercício em que você estava —
+    // "primeiro incompleto" mandava você de volta pro começo da ficha.
+    const saved = loadActiveIdx(sessionId);
     const firstIncomplete = enriched.findIndex((e) => !e.is_completed);
-    setActiveIdx(firstIncomplete === -1 ? 0 : firstIncomplete);
+    setActiveIdx(
+      saved != null && saved < enriched.length
+        ? saved
+        : firstIncomplete === -1
+          ? 0
+          : firstIncomplete
+    );
 
     setLoading(false);
   }
@@ -444,6 +454,48 @@ function SessaoAtivaPage() {
     return () => window.removeEventListener("pointerdown", arm);
   }, []);
 
+  // Tela acesa durante toda a sessão, não só no descanso.
+  //
+  // No iPhone, quando a tela bloqueia o WebKit despeja o PWA da memória: ao
+  // voltar, o app recarrega do zero — era metade do "reinicia por qualquer
+  // coisa". Segurar o wake lock enquanto o treino está aberto mantém o app
+  // vivo. O lock é solto pelo sistema quando o app vai pro background (trocar
+  // pro Spotify), então reobtemos ao voltar.
+  const sessionFinished = !!session?.completed_at;
+  useEffect(() => {
+    if (sessionFinished) {
+      releaseWakeLock();
+      return;
+    }
+    acquireWakeLock();
+    function onVisible() {
+      if (!document.hidden && !hasWakeLock()) acquireWakeLock();
+    }
+    document.addEventListener("visibilitychange", onVisible);
+    return () => {
+      document.removeEventListener("visibilitychange", onVisible);
+      releaseWakeLock();
+    };
+  }, [sessionFinished]);
+
+  // Guarda o exercício aberto para reabrir no mesmo ponto após um restart.
+  useEffect(() => {
+    if (!sessionId || loading) return;
+    saveActiveIdx(sessionId, activeIdx);
+  }, [sessionId, activeIdx, loading]);
+
+  // Retoma o descanso que estava correndo quando o app foi morto. O que ficou
+  // guardado é o instante de término, então o tempo continua correndo com o
+  // app fechado e a contagem volta certa (ou já expirada, e aí é descartada).
+  useEffect(() => {
+    if (!sessionId) return;
+    const saved = loadRest(sessionId);
+    if (!saved) return;
+    setRestEndAt(saved.endAt);
+    setRestTotal(saved.total);
+    setRestRemaining(Math.max(1, Math.ceil((saved.endAt - Date.now()) / 1000)));
+  }, [sessionId]);
+
   function startRestTimer(seconds: number) {
     if (restRef.current) clearInterval(restRef.current);
     // Timestamp absoluto — funciona mesmo com tela apagada / app em background
@@ -451,19 +503,19 @@ function SessaoAtivaPage() {
     setRestEndAt(endAt);
     setRestTotal(seconds);
     setRestRemaining(seconds);
+    saveRest({ sessionId, endAt, total: seconds });
+  }
+
+  function stopRestTimer() {
+    setRestRemaining(null);
+    setRestEndAt(null);
+    clearRest();
   }
 
   // Tick do rest timer baseado em endAt
   useEffect(() => {
     if (restRef.current) clearInterval(restRef.current);
-    if (restEndAt == null) {
-      releaseWakeLock();
-      return;
-    }
-
-    // Mantém a tela acesa durante o descanso: com o iPhone bloqueado o
-    // AudioContext é suspenso e o bipe nunca sai.
-    acquireWakeLock();
+    if (restEndAt == null) return;
 
     let alerted = false;
     function tick() {
@@ -475,9 +527,7 @@ function SessaoAtivaPage() {
           alerted = true;
           playRestAlert(); // bipe + vibração (a vibração é no-op no iOS)
         }
-        setRestRemaining(null);
-        setRestEndAt(null);
-        releaseWakeLock();
+        stopRestTimer();
         return;
       }
       setRestRemaining(remaining);
@@ -489,15 +539,12 @@ function SessaoAtivaPage() {
     function onVisible() {
       if (document.hidden) return;
       tick();
-      // O sistema solta o wake lock ao esconder a aba — reobtém se ainda conta
-      if (restEndAt != null && !hasWakeLock()) acquireWakeLock();
     }
     document.addEventListener("visibilitychange", onVisible);
 
     return () => {
       if (restRef.current) clearInterval(restRef.current);
       document.removeEventListener("visibilitychange", onVisible);
-      releaseWakeLock();
     };
   }, [restEndAt]);
 
@@ -520,6 +567,7 @@ function SessaoAtivaPage() {
       { localTable: "workout_sessions", localId: sessionId }
     );
     if ("vibrate" in navigator) navigator.vibrate([100, 50, 100, 50, 300]);
+    clearSessionState();
     router.push(`/sessao/resumo?id=${sessionId}`);
   }
 
@@ -533,6 +581,7 @@ function SessaoAtivaPage() {
     if (!ok) return;
 
     await offlineDelete("workout_sessions", { id: sessionId }, { localTable: "workout_sessions", localId: sessionId });
+    clearSessionState();
     router.push("/sessao");
   }
 
@@ -681,7 +730,7 @@ function SessaoAtivaPage() {
                 {fmtTimer(restRemaining)}
               </span>
               <button
-                onClick={() => { setRestRemaining(null); setRestEndAt(null); }}
+                onClick={stopRestTimer}
                 className="text-xs font-medium flex-shrink-0 px-2.5 py-1.5 rounded-md"
                 style={{
                   background: "rgba(68, 147, 224, 0.10)",

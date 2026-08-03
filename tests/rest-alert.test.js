@@ -30,6 +30,7 @@ class FakeAudioContext {
     FakeAudioContext.criados++;
   }
   async resume() { this.state = "running"; }
+  async suspend() { this.state = "suspended"; }
   createOscillator() { return new FakeOsc(); }
   createGain() { return new FakeGain(); }
 }
@@ -53,9 +54,10 @@ test("armRestAlert cria o contexto uma vez só", () => {
   assert.equal(FakeAudioContext.criados, 1);
 });
 
-test("libera o som com o iPhone no silencioso", () => {
-  // Sem isto o iOS muta Web Audio quando a chave lateral está no mudo
-  assert.equal(navigator.audioSession.type, "playback");
+test("não rouba o áudio do Spotify", () => {
+  // "playback" fazia o iOS PARAR a música dos outros apps ao acordar o
+  // contexto. "transient" só abaixa o volume durante o bipe.
+  assert.equal(navigator.audioSession.type, "transient");
 });
 
 test("toca dois bipes em sequência", async () => {
@@ -64,6 +66,12 @@ test("toca dois bipes em sequência", async () => {
   assert.equal(osciladores.length, 2);
   assert.ok(osciladores[1]._start > osciladores[0]._start, "o segundo vem depois");
   assert.ok(osciladores.every((o) => o._stop > o._start), "cada bipe tem fim agendado");
+});
+
+test("dorme depois do bipe — não segura a audio session", async () => {
+  assert.equal(alerta.isAudioAwake(), true, "acordado logo após tocar");
+  await new Promise((r) => setTimeout(r, 800));
+  assert.equal(alerta.isAudioAwake(), false, "voltou a dormir, música liberada");
 });
 
 test("wake lock: pede, não duplica e solta", async () => {

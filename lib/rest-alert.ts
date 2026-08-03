@@ -1,4 +1,4 @@
-// Aviso de fim de descanso que funciona no iPhone.
+// Aviso de fim de descanso que funciona no iPhone — sem parar a sua música.
 //
 // O app avisava só com `navigator.vibrate`, que o WebKit não implementa — os
 // quatro pontos que usam vibração nunca dispararam no iOS. Na prática o timer
@@ -10,14 +10,36 @@
 //   1. O AudioContext nasce suspenso e só pode ser retomado dentro de um gesto
 //      do usuário. Por isso `armRestAlert()` é chamado no primeiro toque na
 //      tela da sessão, e não na hora de tocar o som.
-//   2. Por padrão o iOS silencia Web Audio quando a chave lateral está no mudo.
-//      `navigator.audioSession.type = "playback"` (Safari 16.4+) contorna isso.
-//   3. Com a tela apagada o contexto é suspenso e o som não sai. Daí o wake
-//      lock enquanto o cronômetro corre.
+//   2. O tipo da audio session decide o que acontece com o Spotify. Com
+//      `"playback"` — como estava — o iOS trata o app como tocador de música e
+//      **para** o áudio dos outros apps no instante em que o contexto acorda:
+//      era isso que pausava a sua música ao abrir a sessão. `"transient"` é a
+//      categoria de bipe curto: a música só abaixa (duck) durante o alerta e
+//      volta sozinha, igual GPS.
+//   3. Contexto acordado = audio session ativa. Então ele fica **suspenso**
+//      entre um descanso e outro e só acorda os ~700 ms do bipe. Sem isso a
+//      música ficaria abafada o treino inteiro.
+//
+// O destravamento do passo 1 vale para sempre: uma vez que o contexto foi
+// retomado dentro de um gesto, os `resume()` seguintes funcionam fora de gesto.
 "use client";
 
 let ctx: AudioContext | null = null;
 let wakeLock: WakeLockSentinel | null = null;
+let idleTimer: ReturnType<typeof setTimeout> | null = null;
+
+/** Devolve o contexto ao repouso — audio session inativa, música intocada. */
+function suspendSoon(delayMs: number): void {
+  if (idleTimer) clearTimeout(idleTimer);
+  idleTimer = setTimeout(() => {
+    idleTimer = null;
+    try {
+      void ctx?.suspend?.();
+    } catch {
+      /* contexto já fechado */
+    }
+  }, delayMs);
+}
 
 /**
  * Prepara o áudio. **Precisa ser chamado de dentro de um gesto do usuário**
@@ -28,9 +50,10 @@ export function armRestAlert(): void {
   if (typeof window === "undefined") return;
 
   try {
-    // Deixa o som passar mesmo com o iPhone no silencioso (Safari 16.4+)
+    // "transient" = bipe curto. A música dos outros apps abaixa durante o
+    // alerta e volta sozinha. Nunca use "playback" aqui: pausa o Spotify.
     const audioSession = (navigator as any).audioSession;
-    if (audioSession && audioSession.type !== "playback") audioSession.type = "playback";
+    if (audioSession && audioSession.type !== "transient") audioSession.type = "transient";
   } catch {
     /* navegador sem audioSession — segue sem isso */
   }
@@ -39,7 +62,9 @@ export function armRestAlert(): void {
     const Ctor = window.AudioContext ?? (window as any).webkitAudioContext;
     if (!Ctor) return;
     if (!ctx) ctx = new Ctor();
+    // Destrava dentro do gesto e volta a dormir logo em seguida.
     if (ctx.state === "suspended") void ctx.resume();
+    suspendSoon(300);
   } catch {
     ctx = null;
   }
@@ -58,7 +83,11 @@ export async function playRestAlert(): Promise<void> {
 
   if (!ctx) return;
   try {
-    if (ctx.state === "suspended") await ctx.resume();
+    if (idleTimer) {
+      clearTimeout(idleTimer);
+      idleTimer = null;
+    }
+    if (ctx.state !== "running") await ctx.resume();
     if (ctx.state !== "running") return;
 
     const inicio = ctx.currentTime;
@@ -78,14 +107,23 @@ export async function playRestAlert(): Promise<void> {
       osc.start(t);
       osc.stop(t + 0.2);
     }
+
+    // Devolve o áudio ao Spotify assim que o segundo bipe termina.
+    suspendSoon(700);
   } catch {
     /* sem áudio disponível — resta a vibração no Android */
   }
 }
 
+/** true se o contexto está acordado (ocupando a audio session). Usado nos testes. */
+export function isAudioAwake(): boolean {
+  return ctx?.state === "running";
+}
+
 /**
- * Segura a tela acesa enquanto o descanso corre. Sem isto o iOS bloqueia a
- * tela no meio da contagem, suspende o AudioContext e o bipe não sai.
+ * Segura a tela acesa. Vale para a sessão inteira, não só para o descanso: no
+ * iPhone, quando a tela bloqueia o WebKit despeja o PWA da memória e ao voltar
+ * o app "reinicia" — perdendo cronômetro, descanso e o que estava digitado.
  */
 export async function acquireWakeLock(): Promise<void> {
   try {
