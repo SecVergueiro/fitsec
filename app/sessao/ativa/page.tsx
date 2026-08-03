@@ -14,6 +14,7 @@ import { pendingCount } from "@/lib/sync-engine";
 import { db as offlineDB } from "@/lib/offline-db";
 import { armRestAlert, playRestAlert, acquireWakeLock, releaseWakeLock, hasWakeLock } from "@/lib/rest-alert";
 import { saveRest, loadRest, clearRest, saveActiveIdx, loadActiveIdx, clearSessionState } from "@/lib/session-timer";
+import { startIosTimer, isIosTimerEnabled } from "@/lib/ios-timer";
 import { useProfile } from "@/components/ProfileProvider";
 import type { Exercise, SessionExercise, SessionSet, WorkoutSession } from "@/lib/database.types";
 import { AddExerciseToSessionModal } from "./AddExerciseModal";
@@ -60,6 +61,8 @@ function SessaoAtivaPage() {
   const [showAddExercise, setShowAddExercise] = useState(false);
   const [showFinishModal, setShowFinishModal] = useState(false);
   const [showSessionInfo, setShowSessionInfo] = useState(false);
+  // Lido só no cliente: em render dá mismatch de hidratação (a página é estática)
+  const [iosTimerOn, setIosTimerOn] = useState(false);
   const [mesoWeek, setMesoWeek] = useState<number | null>(null);
   const [mesoTotalWeeks, setMesoTotalWeeks] = useState<number | null>(null);
   const restRef = useRef<NodeJS.Timeout | null>(null);
@@ -478,6 +481,10 @@ function SessaoAtivaPage() {
     };
   }, [sessionFinished]);
 
+  useEffect(() => {
+    setIosTimerOn(isIosTimerEnabled());
+  }, []);
+
   // Guarda o exercício aberto para reabrir no mesmo ponto após um restart.
   useEffect(() => {
     if (!sessionId || loading) return;
@@ -504,6 +511,9 @@ function SessaoAtivaPage() {
     setRestTotal(seconds);
     setRestRemaining(seconds);
     saveRest({ sessionId, endAt, total: seconds });
+    // Espelha no timer nativo do iPhone, se ligado no Perfil: é ele que
+    // aparece na tela bloqueada e na Dynamic Island.
+    startIosTimer(seconds);
   }
 
   function stopRestTimer() {
@@ -729,6 +739,21 @@ function SessaoAtivaPage() {
               >
                 {fmtTimer(restRemaining)}
               </span>
+              {iosTimerOn && (
+                <button
+                  onClick={() => startIosTimer(restRemaining ?? 0, true)}
+                  aria-label="Mandar o tempo restante para o timer do iPhone"
+                  className="text-sm flex-shrink-0 px-2.5 py-1.5 rounded-md"
+                  style={{
+                    background: "rgba(68, 147, 224, 0.10)",
+                    color: "var(--accent)",
+                    border: "0.5px solid rgba(68, 147, 224, 0.2)",
+                    minHeight: "auto",
+                  }}
+                >
+                  ⏱
+                </button>
+              )}
               <button
                 onClick={stopRestTimer}
                 className="text-xs font-medium flex-shrink-0 px-2.5 py-1.5 rounded-md"

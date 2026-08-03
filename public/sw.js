@@ -4,7 +4,7 @@
 //
 // NÃO edite public/sw.js — edite este arquivo.
 
-const VERSION = "qrKkF8m1gkJMTSyTeEnNS";
+const VERSION = "ucy25DDIUgv3xODGkZx3Z";
 const CACHE = "fitsec-" + VERSION;
 
 // Chunks JS/CSS do build (nomes com hash → imutáveis).
@@ -23,17 +23,18 @@ const PRECACHE_ASSETS = [
   "/_next/static/chunks/659-08cbc3cc1b7bbfa4.js",
   "/_next/static/chunks/689-10a6472c0a01a5ff.js",
   "/_next/static/chunks/966-ec1d7f512174d718.js",
+  "/_next/static/chunks/997-a4151201df94d943.js",
   "/_next/static/chunks/app/_not-found/page-0c9aa90fe6aaf72b.js",
   "/_next/static/chunks/app/biblioteca/page-9e78a6b119e8b37c.js",
   "/_next/static/chunks/app/historico/page-54aa1ff82d6d6e4c.js",
   "/_next/static/chunks/app/layout-8ad4d4e61ee486eb.js",
   "/_next/static/chunks/app/login/page-ce15919e9da941c8.js",
   "/_next/static/chunks/app/page-12dcb9bae130bcf5.js",
-  "/_next/static/chunks/app/perfil/page-3eaa019b5cc43785.js",
+  "/_next/static/chunks/app/perfil/page-1b5448818b3af289.js",
   "/_next/static/chunks/app/public/sessao/[id]/page-b620985d3605d851.js",
   "/_next/static/chunks/app/sessao/[id]/page-c642186aaba38c1b.js",
   "/_next/static/chunks/app/sessao/[id]/resumo/page-562c434320b15a3d.js",
-  "/_next/static/chunks/app/sessao/ativa/page-917b29354d6e3b6d.js",
+  "/_next/static/chunks/app/sessao/ativa/page-edd92854b7263533.js",
   "/_next/static/chunks/app/sessao/page-091b4bb1401f9707.js",
   "/_next/static/chunks/app/sessao/resumo/page-831b59134072f33c.js",
   "/_next/static/chunks/app/stats/[exerciseId]/page-d9123514d92eff06.js",
@@ -55,9 +56,9 @@ const PRECACHE_ASSETS = [
   "/_next/static/chunks/pages/_error-2f37a8b74d52c0a0.js",
   "/_next/static/chunks/polyfills-42372ed130431b0a.js",
   "/_next/static/chunks/webpack-36a1d514310b5a92.js",
-  "/_next/static/css/66b1c36baf34f51e.css",
-  "/_next/static/qrKkF8m1gkJMTSyTeEnNS/_buildManifest.js",
-  "/_next/static/qrKkF8m1gkJMTSyTeEnNS/_ssgManifest.js"
+  "/_next/static/css/af4cca254bea6aa5.css",
+  "/_next/static/ucy25DDIUgv3xODGkZx3Z/_buildManifest.js",
+  "/_next/static/ucy25DDIUgv3xODGkZx3Z/_ssgManifest.js"
 ];
 
 // HTML das rotas estáticas + arquivos de public/ (manifest, ícones, offline.html)

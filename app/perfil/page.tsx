@@ -9,6 +9,14 @@ import { useConfirm, useToast } from "@/components/Toast";
 import { Card, Eyebrow, PageHeader } from "@/components/ui";
 import { Button, Spinner } from "@/components/Button";
 import { fmtTonnage } from "@/lib/utils";
+import {
+  DEFAULT_SHORTCUT_NAME,
+  getShortcutName,
+  isIosTimerEnabled,
+  setIosTimerEnabled,
+  setShortcutName,
+  startIosTimer,
+} from "@/lib/ios-timer";
 
 interface Stats {
   totalSessions: number;
@@ -305,6 +313,12 @@ export default function PerfilPage() {
 
       </Card>
 
+      {/* Descanso */}
+      <Eyebrow className="mb-2">Descanso</Eyebrow>
+      <Card className="mb-4 !p-0">
+        <IosTimerSetting />
+      </Card>
+
       {/* Conta */}
       <Eyebrow className="mb-2">Conta</Eyebrow>
       <Card className="mb-5 !p-0">
@@ -332,6 +346,126 @@ export default function PerfilPage() {
         FitSec · feito pra atletas que treinam serio
       </div>
     </div>
+  );
+}
+
+/**
+ * Liga o espelhamento do descanso no timer nativo do iPhone.
+ *
+ * Vem desligado porque depende de um atalho criado à mão no iPhone e porque o
+ * app Atalhos pisca por ~1 s a cada descanso. Em troca, a contagem aparece na
+ * tela bloqueada e na Dynamic Island — coisa que nenhum PWA consegue sozinho.
+ */
+function IosTimerSetting() {
+  const toast = useToast();
+  const [on, setOn] = useState(false);
+  const [nome, setNome] = useState(DEFAULT_SHORTCUT_NAME);
+  const [editandoNome, setEditandoNome] = useState(false);
+  const [ajuda, setAjuda] = useState(false);
+
+  // localStorage só no cliente: em render quebraria a hidratação
+  useEffect(() => {
+    setOn(isIosTimerEnabled());
+    setNome(getShortcutName());
+  }, []);
+
+  function toggle() {
+    const next = !on;
+    setOn(next);
+    setIosTimerEnabled(next);
+    if (next) setAjuda(true);
+  }
+
+  return (
+    <>
+      <SettingRow label="Timer no iPhone">
+        <button
+          onClick={toggle}
+          role="switch"
+          aria-checked={on}
+          aria-label="Espelhar o descanso no timer nativo do iPhone"
+          className="rounded-full transition-colors"
+          style={{
+            width: 46, height: 28, minHeight: 28, padding: 3,
+            background: on ? "var(--accent)" : "var(--border-strong)",
+          }}
+        >
+          <span
+            className="block rounded-full transition-transform"
+            style={{
+              width: 22, height: 22, background: "#fff",
+              transform: on ? "translateX(18px)" : "translateX(0)",
+            }}
+          />
+        </button>
+      </SettingRow>
+
+      {on && (
+        <SettingRow label="Nome do atalho">
+          {editandoNome ? (
+            <div className="flex items-center gap-1.5">
+              <input
+                value={nome}
+                onChange={(e) => setNome(e.target.value)}
+                onKeyDown={(e) => { if (e.key === "Enter") { setShortcutName(nome); setEditandoNome(false); } }}
+                autoFocus
+                className="text-sm font-bold rounded px-2 py-1 text-right"
+                style={{ background: "var(--background)", border: "0.5px solid var(--border-strong)", color: "var(--text)", outline: "none", maxWidth: 160 }}
+              />
+              <button
+                onClick={() => { setShortcutName(nome); setEditandoNome(false); }}
+                className="text-xs font-bold px-2 py-1 rounded"
+                style={{ background: "var(--primary)", color: "var(--background)", minHeight: "auto" }}
+              >
+                OK
+              </button>
+            </div>
+          ) : (
+            <button onClick={() => setEditandoNome(true)} className="text-sm" style={{ color: "var(--text)", minHeight: "auto" }}>
+              {nome}
+            </button>
+          )}
+        </SettingRow>
+      )}
+
+      <button
+        onClick={() => setAjuda((v) => !v)}
+        className="w-full text-left px-4 text-xs font-medium"
+        style={{ paddingTop: 12, paddingBottom: 12, color: "var(--accent)", borderBottom: ajuda ? "0.5px solid var(--border)" : "none", minHeight: 44 }}
+      >
+        {ajuda ? "Esconder" : "Como criar o atalho no iPhone"}
+      </button>
+
+      {ajuda && (
+        <div className="px-4 py-3 text-xs leading-relaxed" style={{ color: "var(--muted)" }}>
+          <p className="mb-2">
+            Um PWA não consegue desenhar na tela bloqueada — quem faz isso é o timer do
+            iOS. O FitSec só o dispara. Leva um minuto, uma vez só:
+          </p>
+          <ol className="list-decimal pl-4 space-y-1 mb-3">
+            <li>Abra o app <strong>Atalhos</strong> → <strong>+</strong> (novo atalho).</li>
+            <li>Adicione a ação <strong>Iniciar timer</strong>.</li>
+            <li>No campo de duração, toque e escolha <strong>Entrada do Atalho</strong>; deixe a unidade em <strong>segundos</strong>.</li>
+            <li>Renomeie o atalho para <strong>{nome}</strong> (tem que ser exatamente esse nome).</li>
+            <li>Salve. Não precisa fixar na tela de início nem nada além disso.</li>
+          </ol>
+          <p className="mb-3">
+            No primeiro descanso o iOS pergunta se o FitSec pode rodar o atalho. Toque em
+            <strong> Sempre Permitir</strong>, senão ele vai perguntar toda vez.
+          </p>
+          <button
+            onClick={() => {
+              const ok = startIosTimer(10, true);
+              if (!ok) toast.error("Não deu pra abrir os Atalhos aqui");
+            }}
+            className="text-xs font-bold px-3 py-2 rounded-md"
+            style={{ background: "var(--accent)", color: "var(--background)", minHeight: 40 }}
+          >
+            Testar com 10 segundos
+          </button>
+        </div>
+      )}
+    </>
   );
 }
 
