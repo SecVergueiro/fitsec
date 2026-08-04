@@ -192,6 +192,24 @@ export default function ModoRapidoPage() {
     <div className="fade-in">
       <PageHeader eyebrow="Modo rápido" title="Anotar treino" />
 
+      {/* Sem catálogo, TODO nome viraria exercício novo — e um exercício
+          duplicado parte a progressão em duas, porque o histórico de e1RM é
+          por exercise_id. Melhor avisar do que sujar a biblioteca em silêncio. */}
+      {catalog.length === 0 && (
+        <div
+          className="mb-4 px-3 py-2.5 rounded-xl text-xs font-medium"
+          style={{
+            background: "rgba(251,191,36,0.08)",
+            border: "0.5px solid rgba(251,191,36,0.3)",
+            color: "#fbbf24",
+            lineHeight: 1.6,
+          }}
+        >
+          A biblioteca ainda não foi baixada neste aparelho, então nada vai casar com os exercícios que você já tem —
+          tudo entraria como novo. Conecte uma vez antes de usar o modo rápido.
+        </div>
+      )}
+
       {activeSession && (
         <div
           className="mb-4 px-3 py-2.5 rounded-xl text-xs font-medium"
@@ -295,6 +313,8 @@ export default function ModoRapidoPage() {
         </div>
       )}
 
+      {/* Avisa mas não bloqueia: perder o treino é pior que um exercício duplicado,
+          que dá pra arrumar depois na biblioteca. */}
       <Button onClick={handleSave} disabled={saving || resolved.length === 0} fullWidth>
         {saving
           ? "Salvando..."
