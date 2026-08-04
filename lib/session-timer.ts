@@ -14,6 +14,7 @@
 
 const REST_KEY = "fitsec_rest_v1";
 const IDX_KEY = "fitsec_active_idx_v1";
+const ACTIVE_SESSION_KEY = "fitsec_active_session_v1";
 
 export interface RestState {
   /** Sessão dona do descanso — evita restaurar o descanso de um treino antigo. */
@@ -97,8 +98,42 @@ export function clearActiveIdx(): void {
   drop(IDX_KEY);
 }
 
+// ────────────────────────────────────────────────────────────────
+// Treino em andamento — para reabrir o app já dentro dele
+// ────────────────────────────────────────────────────────────────
+
+/**
+ * Marca qual treino está em andamento, em localStorage puro.
+ *
+ * Existe para o cold start não custar nada: quando o iOS mata o PWA e você
+ * reabre, o app sabe em qual sessão entrar sem uma única leitura de banco —
+ * era um tap ("Continuar →") depois de esperar as leituras da /sessao.
+ */
+export function saveActiveSession(sessionId: string, startedAt: number): void {
+  write(ACTIVE_SESSION_KEY, { sessionId, startedAt });
+}
+
+/**
+ * Treino em andamento, ou null. Descarta o que passou de `maxAgeMs` — treino
+ * esquecido aberto de ontem não deve sequestrar a abertura do app.
+ */
+export function loadActiveSession(maxAgeMs: number, now: number = Date.now()): { sessionId: string; startedAt: number } | null {
+  const s = read(ACTIVE_SESSION_KEY);
+  if (!s || typeof s.sessionId !== "string" || typeof s.startedAt !== "number") return null;
+  if (now - s.startedAt > maxAgeMs) {
+    clearActiveSession();
+    return null;
+  }
+  return { sessionId: s.sessionId, startedAt: s.startedAt };
+}
+
+export function clearActiveSession(): void {
+  drop(ACTIVE_SESSION_KEY);
+}
+
 /** Chamado ao finalizar/descartar o treino — não deixa lixo para a próxima sessão. */
 export function clearSessionState(): void {
   clearRest();
   clearActiveIdx();
+  clearActiveSession();
 }

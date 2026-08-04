@@ -44,6 +44,12 @@
       "icons": [{ "src": "/icon-192.png", "sizes": "192x192" }]
     },
     {
+      "name": "Anotar treino (modo rápido)",
+      "short_name": "Anotar",
+      "url": "/sessao/rapido",
+      "icons": [{ "src": "/icon-192.png", "sizes": "192x192" }]
+    },
+    {
       "name": "Stats",
       "short_name": "Stats",
       "url": "/stats",

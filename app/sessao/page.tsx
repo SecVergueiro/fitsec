@@ -11,6 +11,7 @@ import { useProfile } from "@/components/ProfileProvider";
 import { offlineInsert, offlineUpdate } from "@/lib/offline-writes";
 import { offlineRead, offlineReadList } from "@/lib/offline-reads";
 import { db as offlineDB } from "@/lib/offline-db";
+import { saveActiveSession } from "@/lib/session-timer";
 import { fmtRelativeDate, WEEKDAY_LABELS } from "@/lib/utils";
 import type { Mesocycle, TemplateDay, WorkoutSession } from "@/lib/database.types";
 
@@ -33,11 +34,23 @@ export default function SessaoIndex() {
   const [pendingDayId, setPendingDayId] = useState<string | null>(null);
 
   useEffect(() => {
-    init();
+    // Cache primeiro (instantâneo), rede depois em background. Mesmo motivo da
+    // sessão ativa: essas leituras eram sequenciais e rede-primeiro, então em
+    // sinal ruim a tela ficava em spinner somando o timeout de cada uma.
+    let alive = true;
+    (async () => {
+      const painted = await init({ localOnly: true });
+      if (!alive) return;
+      if (painted) setLoading(false);
+      if (typeof navigator === "undefined" || navigator.onLine) await init();
+      if (alive) setLoading(false);
+    })();
+    return () => { alive = false; };
   }, []);
 
-  async function init() {
-    setLoading(true);
+  /** `localOnly` não toca na rede — é a passada que pinta a tela. */
+  async function init({ localOnly = false }: { localOnly?: boolean } = {}): Promise<boolean> {
+    const readOpts = { localOnly };
 
     // 1. Sessão em andamento
     const active = await offlineRead<WorkoutSession>(
@@ -47,19 +60,24 @@ export default function SessaoIndex() {
         const list = await offlineDB.workout_sessions.filter((s) => s.completed_at == null).toArray();
         list.sort((a, b) => new Date(b.started_at).getTime() - new Date(a.started_at).getTime());
         return list[0] ?? null;
-      }
+      },
+      readOpts
     );
 
     if (active) {
       const elapsedMin = (Date.now() - new Date(active.started_at).getTime()) / 60000;
       if (elapsedMin > SESSION_MAX_MINUTES) {
-        const autoEnd = new Date(new Date(active.started_at).getTime() + SESSION_MAX_MINUTES * 60000);
-        await offlineUpdate(
-          "workout_sessions",
-          { completed_at: autoEnd.toISOString(), ended_at: autoEnd.toISOString(), duration_minutes: SESSION_MAX_MINUTES },
-          { id: active.id },
-          { localTable: "workout_sessions", localId: active.id }
-        );
+        // A passada de cache não escreve — senão o encerramento automático
+        // entraria duas vezes na fila por abertura de tela.
+        if (!localOnly) {
+          const autoEnd = new Date(new Date(active.started_at).getTime() + SESSION_MAX_MINUTES * 60000);
+          await offlineUpdate(
+            "workout_sessions",
+            { completed_at: autoEnd.toISOString(), ended_at: autoEnd.toISOString(), duration_minutes: SESSION_MAX_MINUTES },
+            { id: active.id },
+            { localTable: "workout_sessions", localId: active.id }
+          );
+        }
       } else {
         setActiveSession(active);
       }
@@ -72,7 +90,8 @@ export default function SessaoIndex() {
         if (!offlineDB) return null;
         const list = await offlineDB.mesocycles.filter((m) => (m as any).is_active === true).toArray();
         return (list[0] as Mesocycle) ?? null;
-      }
+      },
+      readOpts
     );
 
     let templateId: string | null = null;
@@ -87,7 +106,8 @@ export default function SessaoIndex() {
           if (!offlineDB) return null;
           const list = await offlineDB.templates.filter((t) => (t as any).is_active === true).toArray();
           return list[0] ? { id: list[0].id } : null;
-        }
+        },
+        readOpts
       );
       templateId = tpl?.id ?? null;
     }
@@ -101,7 +121,8 @@ export default function SessaoIndex() {
           if (!offlineDB) return null;
           const list = await offlineDB.template_days.where("template_id").equals(templateId!).filter((d) => d.weekday === todayWeekday).toArray();
           return list[0] ?? null;
-        }
+        },
+        readOpts
       );
       setTodayDay(dayData);
 
@@ -111,7 +132,8 @@ export default function SessaoIndex() {
           async () =>
             offlineDB
               ? offlineDB.template_exercises.where("template_day_id").equals(dayData.id).toArray()
-              : null
+              : null,
+          readOpts
         );
         setExerciseCount(prescribed.length);
 
@@ -132,7 +154,8 @@ export default function SessaoIndex() {
               .toArray();
             list.sort((a, b) => b.session_date.localeCompare(a.session_date));
             return list.slice(0, 5) as any[];
-          }
+          },
+          readOpts
         );
         if (pastSessions.length > 0) {
           const avg = pastSessions.reduce((s, p) => s + p.duration_minutes, 0) / pastSessions.length;
@@ -155,13 +178,16 @@ export default function SessaoIndex() {
           const d = await offlineDB.template_days.get(s.template_day_id);
           return { ...s, day_name: d?.name ?? null };
         }));
-      }
+      },
+      readOpts
     );
 
     const enriched = (recent as any[])?.map((r) => ({ ...r, day_name: r.day_name ?? r.template_days?.name })) ?? [];
     setRecentSessions(enriched);
 
-    setLoading(false);
+    // Só considera a tela "pintada" se havia o que pintar — senão o "Dia de
+    // descanso" apareceria por um segundo antes de a rede dizer o contrário.
+    return active != null || templateId != null;
   }
 
   function startSession(templateDayId: string | null) {
@@ -194,6 +220,9 @@ export default function SessaoIndex() {
     );
 
     const sessionId = session.id;
+
+    // Marca o treino em andamento: se o iOS matar o PWA, reabrir cai direto aqui.
+    saveActiveSession(sessionId, Date.now());
 
     if (templateDayId) {
       // Prescrição do dia — do servidor, com o Dexie como fallback offline
@@ -318,14 +347,20 @@ export default function SessaoIndex() {
           <Button onClick={() => startSession(todayDay.id)} disabled={starting} fullWidth>
             {starting ? "Iniciando..." : "Iniciar treino →"}
           </Button>
-          <button
-            onClick={() => startSession(null)}
-            disabled={starting}
-            className="w-full text-center text-xs mt-3 py-1"
-            style={{ color: "var(--muted)", minHeight: "auto" }}
-          >
-            Iniciar treino livre
-          </button>
+          <div className="flex items-center justify-center gap-3 mt-3">
+            <button
+              onClick={() => startSession(null)}
+              disabled={starting}
+              className="text-xs py-1"
+              style={{ color: "var(--muted)", minHeight: "auto" }}
+            >
+              Treino livre
+            </button>
+            <span style={{ color: "var(--border-strong)" }}>·</span>
+            <Link href="/sessao/rapido" className="text-xs py-1" style={{ color: "var(--muted)", minHeight: "auto" }}>
+              Modo rápido
+            </Link>
+          </div>
         </Card>
       ) : (
         <Card variant="strong" className="mb-5">
@@ -339,6 +374,13 @@ export default function SessaoIndex() {
           <Button onClick={() => startSession(null)} disabled={starting} fullWidth>
             {starting ? "Iniciando..." : "Treino livre →"}
           </Button>
+          <Link
+            href="/sessao/rapido"
+            className="block text-center text-xs mt-3 py-1"
+            style={{ color: "var(--muted)", minHeight: "auto" }}
+          >
+            Modo rápido
+          </Link>
         </Card>
       )}
 

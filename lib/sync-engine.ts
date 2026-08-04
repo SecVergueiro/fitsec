@@ -126,7 +126,12 @@ export async function flushQueue(): Promise<{ flushed: number; failed: number }>
     const { data: { session } } = await supabase.auth.getSession();
     if (!session) return { flushed: 0, failed: 0 };
 
-    const pending = await db.pending_mutations.orderBy("created_at").toArray();
+    // Ordena por `id` (++autoincrement), não por `created_at`: várias mutações
+    // caem no mesmo milissegundo (uma sessão e seus session_exercises saem em
+    // rajada) e o empate deixava a ordem indefinida. Se um session_set sai
+    // antes do seu session_exercise, o servidor recusa por chave estrangeira e
+    // a série queima as tentativas até desaparecer. O id é a ordem real.
+    const pending = await db.pending_mutations.orderBy("id").toArray();
     for (const m of pending) {
       if (m.attempts >= MAX_RETRIES) {
         failed++;

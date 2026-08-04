@@ -96,6 +96,49 @@ test("insert · offline enfileira com id local", async () => {
   assert.equal(servidor.estado.recebidos.length, 0);
 });
 
+// ── modo otimista (caminho de salvar série) ──────────────────────
+//
+// O que não pode acontecer: o botão esperar o servidor. Era isso que atrasava
+// o início do descanso e fazia o timer nativo do iPhone ganhar.
+
+test("otimista · não espera o servidor e mesmo assim não perde a série", async () => {
+  const r = await offlineInsert(
+    "session_sets",
+    { weight_kg: 80, reps: 8 },
+    { localTable: "exercises", optimistic: true }
+  );
+
+  assert.ok(r.id, "devolve na hora, com id local");
+  assert.equal(localTable.size, 1, "já está no cache local — a UI pinta imediato");
+  assert.equal(servidor.estado.recebidos.length, 0, "não tocou na rede no caminho crítico");
+  assert.equal(enfileirados.length, 1, "e está na fila, então sobrevive ao iOS matar o app");
+  assert.equal(enfileirados[0].payload.weight_kg, 80);
+});
+
+test("otimista · offline se comporta igual", async () => {
+  setNavigator({ onLine: false });
+  const r = await offlineInsert(
+    "session_sets",
+    { weight_kg: 100, reps: 5 },
+    { localTable: "exercises", optimistic: true }
+  );
+  assert.ok(r.id);
+  assert.equal(enfileirados.length, 1);
+});
+
+test("otimista · erro do servidor não estoura no caminho crítico", async () => {
+  // A recusa é problema do flush, não do dedo do usuário no botão: salvar a
+  // série nunca pode lançar no meio do treino.
+  servidor.estado.erroForcado = CONSTRAINT;
+  const r = await offlineInsert(
+    "session_sets",
+    { weight_kg: 60, reps: 12 },
+    { localTable: "exercises", optimistic: true }
+  );
+  assert.ok(r.id);
+  assert.equal(enfileirados.length, 1);
+});
+
 test("update segue a mesma política", async () => {
   servidor.estado.erroForcado = REDE;
   await offlineUpdate("exercises", { name: "x" }, { id: "1" });

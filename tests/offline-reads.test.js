@@ -59,6 +59,52 @@ test("preferLocal com cache vazio ainda busca no servidor", async () => {
   assert.deepEqual(await offlineRead(sucesso, cacheVazio, { preferLocal: true }), SERVIDOR);
 });
 
+// ── localOnly: a passada que pinta a tela ────────────────────────
+//
+// Na academia o celular está "online" pelo navigator.onLine mas com sinal
+// horrível. Qualquer await de rede antes da primeira pintura vira segundos de
+// spinner — a cada vez que o iOS mata o PWA, ou seja, a cada troca de app.
+
+test("localOnly nunca toca no servidor, mesmo online", async () => {
+  let tentou = false;
+  const r = await offlineRead(
+    async () => { tentou = true; return { data: SERVIDOR }; },
+    cacheCheio,
+    { localOnly: true }
+  );
+  assert.deepEqual(r, CACHE);
+  assert.equal(tentou, false);
+});
+
+test("localOnly com cache vazio devolve vazio na hora, sem esperar rede", async () => {
+  let tentou = false;
+  const r = await offlineRead(
+    async () => { tentou = true; return { data: SERVIDOR }; },
+    cacheVazio,
+    { localOnly: true }
+  );
+  assert.deepEqual(r, []);
+  assert.equal(tentou, false, "quem decide buscar na rede é a segunda passada");
+});
+
+test("localOnly não espera timeout de query pendurada", async () => {
+  const r = await offlineRead(() => new Promise(() => {}), cacheCheio, { localOnly: true });
+  assert.deepEqual(r, CACHE);
+});
+
+test("makeReaders repassa o localOnly para todas as leituras da tela", async () => {
+  const { makeReaders } = load("offline-reads");
+
+  const cache = makeReaders(true);
+  let tentou = false;
+  await cache.read(async () => { tentou = true; return { data: SERVIDOR }; }, cacheCheio);
+  assert.equal(tentou, false, "a passada de cache não consulta o servidor");
+
+  const rede = makeReaders(false);
+  assert.deepEqual(await rede.read(sucesso, cacheCheio), SERVIDOR);
+  assert.deepEqual(await rede.readList(erroDeRede, async () => null), []);
+});
+
 test("cache quebrado não derruba a tela", async () => {
   const r = await offlineRead(erroDeRede, async () => { throw new Error("dexie morreu"); });
   assert.equal(r, null);

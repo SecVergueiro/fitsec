@@ -19,10 +19,26 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Comandos
 - `npm run dev` — rodar localmente (localhost:3000)
-- `npm run build` — validar build de produção
-- `npm run lint` — ESLint
+- `npm run build` — validar build de produção (gera `public/sw.js` no fim)
+- `npm test` — suíte do offline/PWA (`node --test`); compila `lib/` para `.test-build/` antes
+- `npm run lint` — ESLint (não configurado ainda: o comando abre o wizard)
 
-Não há testes automatizados no projeto.
+## Velocidade é requisito, não polimento
+
+O app é usado como PWA no iPhone, na academia, com música tocando em outro app —
+e o iOS mata o PWA a cada troca de app. Isso torna o cold start o caminho mais
+percorrido do app, não o mais raro.
+
+Duas regras que caem daí:
+
+1. **Leitura é cache-first.** Telas carregam em duas passadas: `localOnly: true`
+   pinta do IndexedDB em milissegundos, depois a mesma função roda contra o
+   servidor sem spinner. Use `makeReaders(localOnly)` de `lib/offline-reads.ts`
+   em telas com muitas leituras. Rede-primeiro na primeira pintura = segundos de
+   spinner com sinal ruim de academia.
+2. **O caminho crítico do treino não espera o servidor.** `offlineInsert(...,
+   { optimistic: true })` grava local, devolve na hora e manda pela fila. O
+   descanso começa antes de qualquer `await`.
 
 ## Configuração de ambiente
 
@@ -76,12 +92,17 @@ app/
     template/[id]/dia/[dayId]/  # exercícios prescritos de um dia
     mesociclo/         # histórico + criar mesociclo
   sessao/              # tela principal de treino (página raiz + sessão ativa)
+    rapido/            # modo rápido: texto livre "supino 80x8 80x7" → séries
   stats/               # progressão e PRs (visão geral + detalhe por exercício)
 
 lib/
   supabase.ts          # cliente singleton
   database.types.ts    # interfaces TypeScript das tabelas
   utils.ts             # estimate1RM, fmtKg, MUSCLE_LABELS, WEEKDAY_LABELS…
+  quick-log.ts         # parser do modo rápido (função pura, testada)
+  offline-reads.ts     # offlineRead/offlineReadList/makeReaders
+  offline-writes.ts    # offlineInsert/Update/Delete (+ modo optimistic)
+  session-timer.ts     # descanso, exercício aberto e treino em andamento no localStorage
 components/
   ui.tsx               # Card, Pill, Eyebrow, PageHeader
   Button.tsx           # Button, Input, Spinner

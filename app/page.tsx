@@ -2,15 +2,22 @@
 
 import { useEffect, useState } from "react";
 import Link from "next/link";
+import { useRouter } from "next/navigation";
 import { supabase } from "@/lib/supabase";
+import { loadActiveSession } from "@/lib/session-timer";
 import { Card, Eyebrow, Pill } from "@/components/ui";
 import { detectPlateau, fmtRelativeDate, getStreakMilestone, WEEKDAY_LABELS } from "@/lib/utils";
 import { useProfile } from "@/components/ProfileProvider";
-import { offlineRead, offlineReadList } from "@/lib/offline-reads";
+import { makeReaders } from "@/lib/offline-reads";
 import { db as offlineDB } from "@/lib/offline-db";
 import type { Mesocycle, Template, TemplateDay, WorkoutSession } from "@/lib/database.types";
 
 const WEEKDAYS = ["D", "S", "T", "Q", "Q", "S", "S"];
+
+/** Marca de "já retomei neste lançamento do app" — sessionStorage morre com ele. */
+const LAUNCH_FLAG = "fitsec_resumed_launch";
+/** Treino aberto há mais que isso não sequestra a abertura do app (= SESSION_MAX_MINUTES). */
+const RESUME_MAX_AGE_MS = 240 * 60 * 1000;
 
 function getGreeting(): string {
   const h = new Date().getHours();
@@ -20,6 +27,7 @@ function getGreeting(): string {
 }
 
 export default function HomePage() {
+  const router = useRouter();
   const { profile, update } = useProfile();
   const userName = profile?.display_name ?? "";
   const weeklyGoal = profile?.weekly_goal ?? 4;
@@ -42,7 +50,38 @@ export default function HomePage() {
   const [goalInput, setGoalInput] = useState("4");
 
   useEffect(() => {
-    loadDashboard();
+    // Cold start com treino em andamento → entra direto nele, sem tap e sem
+    // uma única leitura de banco. É o caso mais comum de todos: o iOS mata o
+    // PWA quando você troca pro app de música, e voltar custava abrir a Home,
+    // esperar o dashboard carregar, ir em Treinos e tocar em "Continuar".
+    //
+    // Uma vez por lançamento do app: navegar pra "Início" depois disso é uma
+    // escolha sua e continua funcionando.
+    let redirecting = false;
+    try {
+      if (!sessionStorage.getItem(LAUNCH_FLAG)) {
+        sessionStorage.setItem(LAUNCH_FLAG, "1");
+        const active = loadActiveSession(RESUME_MAX_AGE_MS);
+        if (active) {
+          redirecting = true;
+          router.replace(`/sessao/ativa?id=${active.sessionId}`);
+        }
+      }
+    } catch {
+      /* storage bloqueado — segue pro dashboard normal */
+    }
+    // Enquanto redireciona, `loading` fica true e a Home nem pisca.
+    if (redirecting) return;
+
+    // Cache primeiro, rede depois — mesma razão da tela de sessão.
+    let alive = true;
+    (async () => {
+      await loadDashboard({ localOnly: true });
+      if (!alive) return;
+      setLoading(false);
+      if (typeof navigator === "undefined" || navigator.onLine) await loadDashboard();
+    })();
+    return () => { alive = false; };
   }, []);
 
   useEffect(() => {
@@ -64,11 +103,15 @@ export default function HomePage() {
     setEditingName(false);
   }
 
-  async function loadDashboard() {
-    setLoading(true);
+  /**
+   * `localOnly` não toca na rede — é a passada que pinta a tela em
+   * milissegundos. Depois a mesma função roda de novo contra o servidor.
+   */
+  async function loadDashboard({ localOnly = false }: { localOnly?: boolean } = {}) {
+    const { read, readList } = makeReaders(localOnly);
 
     // 0. Sessão em andamento
-    const activeSess = await offlineRead<{ id: string; started_at: string }>(
+    const activeSess = await read<{ id: string; started_at: string }>(
       () => supabase.from("workout_sessions").select("id, started_at").is("completed_at", null).order("started_at", { ascending: false }).limit(1).maybeSingle(),
       async () => {
         if (!offlineDB) return null;
@@ -80,7 +123,7 @@ export default function HomePage() {
     setActiveSession(activeSess);
 
     // 1. Mesociclo ativo
-    const mesoData = await offlineRead<Mesocycle>(
+    const mesoData = await read<Mesocycle>(
       () => supabase.from("mesocycles").select("*").eq("is_active", true).order("start_date", { ascending: false }).limit(1).maybeSingle(),
       async () => {
         if (!offlineDB) return null;
@@ -93,7 +136,7 @@ export default function HomePage() {
     // 2. Template ativo
     let templateId = mesoData?.template_id;
     if (!templateId) {
-      const tpl = await offlineRead<Template>(
+      const tpl = await read<Template>(
         () => supabase.from("templates").select("*").eq("is_active", true).limit(1).maybeSingle(),
         async () => {
           if (!offlineDB) return null;
@@ -106,7 +149,7 @@ export default function HomePage() {
         templateId = tpl.id;
       }
     } else {
-      const tpl = await offlineRead<Template>(
+      const tpl = await read<Template>(
         () => supabase.from("templates").select("*").eq("id", templateId!).single(),
         async () => offlineDB ? (await offlineDB.templates.get(templateId!)) ?? null : null
       );
@@ -116,7 +159,7 @@ export default function HomePage() {
     // 3. Dia de hoje (baseado em weekday) + próximo treino
     const todayWeekday = new Date().getDay();
     if (templateId) {
-      const allDays = await offlineRead<TemplateDay[]>(
+      const allDays = await read<TemplateDay[]>(
         () => supabase.from("template_days").select("*").eq("template_id", templateId!).not("weekday", "is", null),
         async () => {
           if (!offlineDB) return [];
@@ -131,7 +174,7 @@ export default function HomePage() {
       async function countTplExs(dayId: string): Promise<number> {
         // `count: exact` não passa pelo offlineRead (devolve count, não data),
         // e o catch nunca dispara — o supabase-js resolve com { data, error }.
-        const rows = await offlineReadList<{ id: string }>(
+        const rows = await readList<{ id: string }>(
           () => supabase.from("template_exercises").select("id").eq("template_day_id", dayId),
           async () =>
             offlineDB ? offlineDB.template_exercises.where("template_day_id").equals(dayId).toArray() : null
@@ -160,7 +203,7 @@ export default function HomePage() {
     startOfWeek.setHours(0, 0, 0, 0);
     const startStr = startOfWeek.toISOString().slice(0, 10);
 
-    const sessions = await offlineRead<WorkoutSession[]>(
+    const sessions = await read<WorkoutSession[]>(
       () => supabase.from("workout_sessions").select("*").gte("session_date", startStr),
       async () => {
         if (!offlineDB) return [];
@@ -172,7 +215,7 @@ export default function HomePage() {
     // 5. Volume da semana
     if (sessions && sessions.length > 0) {
       const sessionIds = sessions.map((s) => s.id);
-      const sets = await offlineRead<any[]>(
+      const sets = await read<any[]>(
         () => supabase.from("session_sets").select("weight_kg, reps, is_warmup").in("session_id", sessionIds),
         async () => offlineDB ? offlineDB.session_sets.where("session_id").anyOf(sessionIds).toArray() : []
       );
@@ -190,7 +233,7 @@ export default function HomePage() {
     const prevStartStr = startPrevWeek.toISOString().slice(0, 10);
     const prevEndStr = endPrevWeek.toISOString().slice(0, 10);
 
-    const prevSessions = await offlineRead<{ id: string }[]>(
+    const prevSessions = await read<{ id: string }[]>(
       () => supabase.from("workout_sessions").select("id").gte("session_date", prevStartStr).lte("session_date", prevEndStr),
       async () => {
         if (!offlineDB) return [];
@@ -200,7 +243,7 @@ export default function HomePage() {
 
     if (prevSessions && prevSessions.length > 0) {
       const prevIds = prevSessions.map((s) => s.id);
-      const prevSets = await offlineRead<any[]>(
+      const prevSets = await read<any[]>(
         () => supabase.from("session_sets").select("weight_kg, reps, is_warmup").in("session_id", prevIds),
         async () => offlineDB ? offlineDB.session_sets.where("session_id").anyOf(prevIds).toArray() : []
       );
@@ -214,7 +257,7 @@ export default function HomePage() {
     const sixteenWeeksAgo = new Date();
     sixteenWeeksAgo.setDate(sixteenWeeksAgo.getDate() - 112);
     const sixteenStr = sixteenWeeksAgo.toISOString().slice(0, 10);
-    const recentCompleted = await offlineRead<{ session_date: string; completed_at: string | null }[]>(
+    const recentCompleted = await read<{ session_date: string; completed_at: string | null }[]>(
       () => supabase.from("workout_sessions").select("session_date, completed_at").not("completed_at", "is", null).gte("session_date", sixteenStr).order("session_date", { ascending: false }),
       async () => {
         if (!offlineDB) return [];
@@ -254,8 +297,6 @@ export default function HomePage() {
         }
       }
     } catch {/* sem alerta */}
-
-    setLoading(false);
   }
 
   const today = new Date();

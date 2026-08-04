@@ -45,11 +45,42 @@ test("reabre no exercício em que você estava", () => {
   assert.equal(st.loadActiveIdx(OUTRA), null, "índice não vaza entre sessões");
 });
 
+// Reabrir o app já dentro do treino é o que apaga a diferença contra o
+// Notas+Timer: zero tap e zero leitura de banco no cold start.
+test("reabrir o app volta pro treino em andamento", () => {
+  const agora = 1_700_000_000_000;
+  st.saveActiveSession(SESSAO, agora);
+
+  const voltou = st.loadActiveSession(4 * 60 * 60 * 1000, agora + 10 * 60_000);
+  assert.ok(voltou);
+  assert.equal(voltou.sessionId, SESSAO);
+});
+
+test("treino esquecido aberto não sequestra a abertura do app", () => {
+  const agora = 1_700_000_000_000;
+  st.saveActiveSession(SESSAO, agora);
+
+  const limite = 4 * 60 * 60 * 1000;
+  assert.equal(st.loadActiveSession(limite, agora + limite + 1), null);
+  assert.equal(
+    st.loadActiveSession(limite, agora + limite + 2),
+    null,
+    "e a marca vencida é descartada, não fica tentando de novo"
+  );
+});
+
+test("marca de treino corrompida não redireciona pra lugar nenhum", () => {
+  window.localStorage.setItem("fitsec_active_session_v1", '{"sessionId":123}');
+  assert.equal(st.loadActiveSession(60_000), null);
+});
+
 test("finalizar o treino não deixa lixo para o próximo", () => {
   const agora = 1_700_000_000_000;
   st.saveRest({ sessionId: SESSAO, endAt: agora + 90_000, total: 90 });
   st.saveActiveIdx(SESSAO, 2);
+  st.saveActiveSession(SESSAO, 1_700_000_000_000);
   st.clearSessionState();
+  assert.equal(st.loadActiveSession(60_000, 1_700_000_000_000), null, "não retoma um treino já encerrado");
   assert.equal(st.loadRest(SESSAO, agora), null);
   assert.equal(st.loadActiveIdx(SESSAO), null);
 });

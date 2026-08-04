@@ -66,6 +66,9 @@ export const MUSCLE_LABELS: Record<string, string> = {
   panturrilha: "Panturrilha",
   core: "Abdômen",
   lombar: "Lombar",
+  // Exercício criado pelo modo rápido a partir de um nome digitado: ainda não
+  // se sabe o grupo. Fica visível na biblioteca para você classificar depois.
+  outro: "Sem grupo",
 };
 
 export const EQUIPMENT_LABELS: Record<string, string> = {

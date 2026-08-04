@@ -108,7 +108,23 @@ function localUUID(): string {
 export async function offlineInsert<T extends Record<string, any>>(
   table: string,
   payload: T,
-  options: { localTable?: keyof NonNullable<typeof db> } = {}
+  options: {
+    localTable?: keyof NonNullable<typeof db>;
+    /**
+     * Não espera a resposta do servidor: grava local, devolve na hora e manda
+     * pra rede em background.
+     *
+     * É o modo do caminho crítico do treino (salvar série). Sem isso o `await`
+     * do insert online segura o botão em spinner e — pior — atrasa o início do
+     * descanso pelo tempo do round-trip. Na academia isso é o app perdendo pro
+     * timer nativo do iPhone.
+     *
+     * O envio vai pela fila do IndexedDB, não por um fire-and-forget: o iOS
+     * pode matar o PWA no segundo seguinte, e aí uma requisição em vôo morreria
+     * com ela. Na fila, a série sobrevive e sai no próximo flush.
+     */
+    optimistic?: boolean;
+  } = {}
 ): Promise<T & { id: string }> {
   // Gera id local — Supabase aceitará no insert (a maioria das tabelas tem default gen_random_uuid mas aceita id explícito)
   const id = (payload as any).id ?? localUUID();
@@ -119,6 +135,13 @@ export async function offlineInsert<T extends Record<string, any>>(
     try {
       await (db as any)[options.localTable].put(recordWithId);
     } catch {/* ignore */}
+  }
+
+  if (options.optimistic) {
+    // Fila + flush debounced (800 ms) cuidam da rede. O OfflineBadge mostra o
+    // pendente, então o envio nunca é invisível.
+    await enqueue(table, "insert", recordWithId);
+    return recordWithId;
   }
 
   if (isOnline()) {

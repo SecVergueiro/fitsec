@@ -1,6 +1,7 @@
 "use client";
 
 import { Suspense, useEffect, useRef, useState } from "react";
+import { createPortal } from "react-dom";
 import Link from "next/link";
 import { useSearchParams, useRouter } from "next/navigation";
 import { supabase } from "@/lib/supabase";
@@ -13,7 +14,7 @@ import { offlineRead, offlineReadList } from "@/lib/offline-reads";
 import { pendingCount } from "@/lib/sync-engine";
 import { db as offlineDB } from "@/lib/offline-db";
 import { armRestAlert, playRestAlert, acquireWakeLock, releaseWakeLock, hasWakeLock } from "@/lib/rest-alert";
-import { saveRest, loadRest, clearRest, saveActiveIdx, loadActiveIdx, clearSessionState } from "@/lib/session-timer";
+import { saveRest, loadRest, clearRest, saveActiveIdx, loadActiveIdx, saveActiveSession, clearSessionState } from "@/lib/session-timer";
 import { startIosTimer, isIosTimerEnabled } from "@/lib/ios-timer";
 import { useProfile } from "@/components/ProfileProvider";
 import type { Exercise, SessionExercise, SessionSet, WorkoutSession } from "@/lib/database.types";
@@ -67,14 +68,34 @@ function SessaoAtivaPage() {
   const [mesoTotalWeeks, setMesoTotalWeeks] = useState<number | null>(null);
   const restRef = useRef<NodeJS.Timeout | null>(null);
   const elapsedRef = useRef<NodeJS.Timeout | null>(null);
+  // A revalidação em background não pode reposicionar o exercício aberto.
+  const activeIdxSetRef = useRef(false);
 
   useEffect(() => {
     if (!sessionId) {
       router.replace("/sessao");
       return;
     }
-    load();
+
+    // Duas passadas. A primeira lê só o IndexedDB e pinta a tela em
+    // milissegundos; a segunda revalida contra o servidor sem spinner.
+    //
+    // Antes era uma passada só, rede-primeiro: 3 requests + 2 por exercício
+    // atrás de um spinner de tela cheia. Com sinal ruim de academia cada um
+    // espera até o timeout — e isso acontecia a cada vez que o iOS mata o PWA,
+    // ou seja, a cada troca pro app de música entre séries.
+    let alive = true;
+    (async () => {
+      const painted = await load({ localOnly: true });
+      if (!alive) return;
+      // Cache vazio (sessão criada em outro device) — mantém o spinner até a rede.
+      if (painted) setLoading(false);
+      if (typeof navigator === "undefined" || navigator.onLine) await load();
+      if (alive) setLoading(false);
+    })();
+
     return () => {
+      alive = false;
       if (restRef.current) clearInterval(restRef.current);
     };
   }, [sessionId]);
@@ -122,18 +143,21 @@ function SessaoAtivaPage() {
     };
   }, [session?.started_at, session?.completed_at, exercises]);
 
-  async function load() {
-    setLoading(true);
-
+  /**
+   * Carrega a sessão. Com `localOnly` não toca na rede — é a passada que pinta
+   * a tela. Devolve `true` se achou a sessão.
+   */
+  async function load({ localOnly = false }: { localOnly?: boolean } = {}): Promise<boolean> {
     // Com mutações na fila o servidor ainda não conhece esta sessão e responderia
     // vazio — o que apagaria da tela séries que existem só localmente.
-    const preferLocal = (await pendingCount()) > 0;
+    const preferLocal = localOnly || (await pendingCount()) > 0;
+    const readOpts = { preferLocal, localOnly };
 
     const [sessionData, mesoData, exData] = await Promise.all([
       offlineRead<WorkoutSession>(
         () => supabase.from("workout_sessions").select("*").eq("id", sessionId).maybeSingle(),
         async () => (offlineDB ? (await offlineDB.workout_sessions.get(sessionId)) ?? null : null),
-        { preferLocal }
+        readOpts
       ),
       offlineRead<{ start_date: string; total_weeks: number }>(
         () => supabase.from("mesocycles").select("start_date, total_weeks").eq("is_active", true).limit(1).maybeSingle(),
@@ -143,7 +167,8 @@ function SessaoAtivaPage() {
           // o índice nunca é populado, então filtra em memória.
           const list = await offlineDB.mesocycles.filter((m) => (m as any).is_active === true).toArray();
           return (list[0] as any) ?? null;
-        }
+        },
+        readOpts
       ),
       offlineReadList<any>(
         () => supabase.from("session_exercises").select("*, exercise:exercises(*)").eq("session_id", sessionId).order("exercise_order"),
@@ -158,11 +183,28 @@ function SessaoAtivaPage() {
             }))
           );
         },
-        { preferLocal }
+        readOpts
       ),
     ]);
 
+    // Sessão inexistente no cache: não zera a tela, deixa a passada de rede decidir.
+    if (!sessionData && localOnly) return false;
+
+    // Se uma série entrou na fila enquanto a rede respondia, o que o servidor
+    // mandou já está velho — aplicar apagaria da tela a série recém-salva e o
+    // usuário registraria de novo. `preferLocal` já cobre o caso em que a fila
+    // existia no começo da passada; aqui cobrimos a que apareceu no meio dela.
+    if (!localOnly && !preferLocal && (await pendingCount()) > 0) {
+      return sessionData != null;
+    }
+
     setSession(sessionData);
+
+    // Mantém a marca de "treino em andamento" fresca — é o que faz o app
+    // reabrir direto aqui depois de o iOS matá-lo.
+    if (sessionData && !sessionData.completed_at) {
+      saveActiveSession(sessionData.id, new Date(sessionData.started_at).getTime());
+    }
 
     if (mesoData) {
       const start = new Date(mesoData.start_date);
@@ -179,7 +221,7 @@ function SessaoAtivaPage() {
             offlineDB
               ? offlineDB.session_sets.where("session_exercise_id").equals(ex.id).sortBy("set_number")
               : null,
-          { preferLocal }
+          readOpts
         );
 
         // Histórico do exercício — best-effort, o cache guarda 60 dias
@@ -200,7 +242,8 @@ function SessaoAtivaPage() {
               .filter((s) => !s.is_warmup && s.session_id !== sessionId)
               .sortBy("performed_at");
             return all.reverse();
-          }
+          },
+          readOpts
         );
 
         let prevBest: any = undefined;
@@ -232,19 +275,24 @@ function SessaoAtivaPage() {
 
     setExercises(enriched);
 
-    // Depois de um restart do iOS, reabre no exercício em que você estava —
-    // "primeiro incompleto" mandava você de volta pro começo da ficha.
-    const saved = loadActiveIdx(sessionId);
-    const firstIncomplete = enriched.findIndex((e) => !e.is_completed);
-    setActiveIdx(
-      saved != null && saved < enriched.length
-        ? saved
-        : firstIncomplete === -1
-          ? 0
-          : firstIncomplete
-    );
+    // Só na primeira passada: a revalidação chega segundos depois e não pode
+    // trocar o exercício que já está aberto embaixo do dedo.
+    if (!activeIdxSetRef.current && enriched.length > 0) {
+      activeIdxSetRef.current = true;
+      // Depois de um restart do iOS, reabre no exercício em que você estava —
+      // "primeiro incompleto" mandava você de volta pro começo da ficha.
+      const saved = loadActiveIdx(sessionId);
+      const firstIncomplete = enriched.findIndex((e) => !e.is_completed);
+      setActiveIdx(
+        saved != null && saved < enriched.length
+          ? saved
+          : firstIncomplete === -1
+            ? 0
+            : firstIncomplete
+      );
+    }
 
-    setLoading(false);
+    return sessionData != null;
   }
 
   async function reorderExercises(orderedIds: string[]) {
@@ -311,6 +359,14 @@ function SessaoAtivaPage() {
     const ex = exercises[exIdx];
     const setNumber = ex.sets.filter((s) => !s.is_warmup).length + (isWarmup ? 0 : 1);
 
+    // Descanso PRIMEIRO, antes de qualquer await. Você solta a barra e o
+    // relógio já está correndo — era o que o timer do iPhone fazia melhor.
+    if (!isWarmup) {
+      const savedRest = typeof window !== "undefined" ? localStorage.getItem(`rest_${ex.exercise_id}`) : null;
+      const restSecs = savedRest ? parseInt(savedRest) : (ex.rest_seconds ?? 0);
+      if (restSecs > 0) startRestTimer(restSecs);
+    }
+
     let data: SessionSet;
     try {
       data = await offlineInsert(
@@ -327,7 +383,7 @@ function SessaoAtivaPage() {
           is_failure: isFailure,
           performed_at: new Date().toISOString(),
         },
-        { localTable: "session_sets" }
+        { localTable: "session_sets", optimistic: true }
       ) as SessionSet;
     } catch {
       toast.error("Erro ao salvar série");
@@ -357,12 +413,6 @@ function SessaoAtivaPage() {
       next[exIdx] = { ...next[exIdx], sets: [...next[exIdx].sets, data as SessionSet] };
       return next;
     });
-
-    if (!isWarmup) {
-      const savedRest = typeof window !== "undefined" ? localStorage.getItem(`rest_${ex.exercise_id}`) : null;
-      const restSecs = savedRest ? parseInt(savedRest) : (ex.rest_seconds ?? 0);
-      if (restSecs > 0) startRestTimer(restSecs);
-    }
 
     return true;
   }
@@ -1031,6 +1081,9 @@ function ExerciseCard({
   const [notes, setNotes] = useState(exercise.notes ?? "");
   const [showNotes, setShowNotes] = useState((exercise.notes ?? "").trim().length > 0);
   const [showTips, setShowTips] = useState(false);
+  // O SaveBar vai por portal — só existe depois da hidratação.
+  const [mounted, setMounted] = useState(false);
+  useEffect(() => setMounted(true), []);
   const notesTimerRef = useRef<NodeJS.Timeout | null>(null);
 
   // Prescrição editável localmente
@@ -1861,40 +1914,72 @@ function ExerciseCard({
             </div>
           )}
 
-          {/* ── BOTÃO SALVAR ── */}
-          <button
-            onClick={handleSave}
-            disabled={saving || weightNum <= 0 || repsNum <= 0}
-            className="w-full rounded-xl flex items-center justify-center gap-2 font-bold"
-            style={{
-              height: 56,
-              background: (saving || weightNum <= 0 || repsNum <= 0) ? "var(--surface-strong)" : "var(--accent)",
-              color: (saving || weightNum <= 0 || repsNum <= 0) ? "var(--muted)" : "var(--background)",
-              letterSpacing: "0.06em",
-              textTransform: "uppercase",
-              fontSize: 14,
-              cursor: (saving || weightNum <= 0 || repsNum <= 0) ? "not-allowed" : "pointer",
-              transition: "all 0.15s ease",
-            }}
-          >
-            {saving ? (
-              <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round" style={{ animation: "spin 1s linear infinite" }}>
-                <path d="M21 12a9 9 0 1 1-6.219-8.56"/>
-              </svg>
-            ) : (
-              <>
-                <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
-                  <polyline points="20 6 9 17 4 12"/>
-                </svg>
-                {isWarmup ? "Aquecimento" : "Salvar Série"}
-              </>
-            )}
-          </button>
+          {/* Espaço pro SaveBar fixo não cobrir o fim do form */}
+          <div style={{ height: SAVE_BAR_HEIGHT }} aria-hidden />
         </div>
       )}
+
+      {/* ── BARRA DE SALVAR (fixa) ──
+          Fica no rodapé, sempre no alcance do dedo. Dentro do card ela ficava
+          embaixo de aquecimento + peso + reps + RIR + toggles + descanso +
+          notas: o form já vem preenchido com a série anterior, mas você tinha
+          que rolar meia tela pra alcançar o botão. Vai por portal porque o card
+          é `overflow-hidden` e vive numa lista sortable com transform — os dois
+          quebram position:fixed. */}
+      {mounted && isActive && !isCompleted && !isReadOnly &&
+        createPortal(
+          <div
+            style={{
+              position: "fixed",
+              // Acima da BottomNav (~58px) + respiro.
+              bottom: "calc(env(safe-area-inset-bottom, 0px) + 68px)",
+              left: 0,
+              right: 0,
+              zIndex: 45,
+              padding: "0 20px",
+              pointerEvents: "none",
+            }}
+          >
+            <div className="max-w-md mx-auto" style={{ pointerEvents: "auto" }}>
+              <button
+                onClick={handleSave}
+                disabled={saving || weightNum <= 0 || repsNum <= 0}
+                className="w-full rounded-xl flex items-center justify-center gap-2 font-bold"
+                style={{
+                  height: 56,
+                  background: (saving || weightNum <= 0 || repsNum <= 0) ? "var(--surface-strong)" : "var(--accent)",
+                  color: (saving || weightNum <= 0 || repsNum <= 0) ? "var(--muted)" : "var(--background)",
+                  letterSpacing: "0.06em",
+                  textTransform: "uppercase",
+                  fontSize: 14,
+                  cursor: (saving || weightNum <= 0 || repsNum <= 0) ? "not-allowed" : "pointer",
+                  transition: "all 0.15s ease",
+                  boxShadow: "0 8px 24px rgba(4,6,7,0.75)",
+                }}
+              >
+                {saving ? (
+                  <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round" style={{ animation: "spin 1s linear infinite" }}>
+                    <path d="M21 12a9 9 0 1 1-6.219-8.56"/>
+                  </svg>
+                ) : (
+                  <>
+                    <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
+                      <polyline points="20 6 9 17 4 12"/>
+                    </svg>
+                    {isWarmup ? "Aquecimento" : weightNum > 0 && repsNum > 0 ? `Salvar ${fmtKg(weightNum)} × ${repsNum}` : "Salvar Série"}
+                  </>
+                )}
+              </button>
+            </div>
+          </div>,
+          document.body
+        )}
     </div>
   );
 }
+
+/** Altura reservada em fluxo pro SaveBar fixo. */
+const SAVE_BAR_HEIGHT = 56;
 
 function calcPlates(targetKg: number): string | null {
   const perSide = (targetKg - 20) / 2;

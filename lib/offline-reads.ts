@@ -26,6 +26,16 @@ interface OfflineReadOptions {
    * localmente — e levando o usuário a registrá-las de novo.
    */
   preferLocal?: boolean;
+  /**
+   * Nunca toca na rede — devolve só o que está no IndexedDB.
+   *
+   * É o que permite pintar a tela em milissegundos. Na academia o celular está
+   * sempre "online" pelo `navigator.onLine` mas com sinal péssimo, então
+   * qualquer await de rede no caminho da primeira pintura custa segundos de
+   * spinner a cada vez que o iOS mata o PWA. O padrão passa a ser: pinta do
+   * cache com `localOnly`, e depois revalida em background sem `localOnly`.
+   */
+  localOnly?: boolean;
 }
 
 /**
@@ -49,6 +59,8 @@ export async function offlineRead<T>(
       return null;
     }
   };
+
+  if (options.localOnly) return readLocal();
 
   if (options.preferLocal) {
     const local = await readLocal();
@@ -82,4 +94,30 @@ export async function offlineReadList<T>(
   options: OfflineReadOptions = {}
 ): Promise<T[]> {
   return (await offlineRead<T[]>(online, offline, options)) ?? [];
+}
+
+/**
+ * Leitores com `localOnly` já embutido, para telas que carregam em duas
+ * passadas: `makeReaders(true)` pinta do cache, `makeReaders(false)` revalida.
+ *
+ * Evita repetir `{ localOnly }` em cada uma das dezenas de leituras de uma
+ * tela — e esquecer numa delas é o suficiente para o spinner voltar.
+ */
+export function makeReaders(localOnly: boolean) {
+  return {
+    read<T>(
+      online: () => PromiseLike<{ data: T | null; error?: unknown }>,
+      offline: () => Promise<T | null>,
+      options: OfflineReadOptions = {}
+    ): Promise<T | null> {
+      return offlineRead<T>(online, offline, { ...options, localOnly });
+    },
+    readList<T>(
+      online: () => PromiseLike<{ data: T[] | null; error?: unknown }>,
+      offline: () => Promise<T[] | null>,
+      options: OfflineReadOptions = {}
+    ): Promise<T[]> {
+      return offlineReadList<T>(online, offline, { ...options, localOnly });
+    },
+  };
 }
