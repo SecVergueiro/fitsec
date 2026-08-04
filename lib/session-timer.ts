@@ -15,6 +15,7 @@
 const REST_KEY = "fitsec_rest_v1";
 const IDX_KEY = "fitsec_active_idx_v1";
 const ACTIVE_SESSION_KEY = "fitsec_active_session_v1";
+const SET_DRAFT_KEY = "fitsec_set_draft_v1";
 
 export interface RestState {
   /** Sessão dona do descanso — evita restaurar o descanso de um treino antigo. */
@@ -99,6 +100,52 @@ export function clearActiveIdx(): void {
 }
 
 // ────────────────────────────────────────────────────────────────
+// Série em preparo — o que já está digitado mas ainda não foi salvo
+// ────────────────────────────────────────────────────────────────
+
+/** Form da próxima série, do jeito que estava na tela. */
+export interface SetDraft {
+  weight: number;
+  reps: number;
+  rir: number | null;
+  isWarmup: boolean;
+  isFailure: boolean;
+}
+
+/**
+ * Guarda a série em preparo do exercício aberto.
+ *
+ * O caso que doía: você toca em "40%" no aquecimento, o form fica com a carga
+ * leve e o botão vira "Aquecimento" — mas antes de salvar você troca pro app de
+ * música, o iOS mata o PWA, e ao voltar o form está de novo no peso de trabalho
+ * com o toggle desligado. O aquecimento "sumia" porque só existia em `useState`.
+ *
+ * Um slot só: apenas um exercício está aberto por vez, e a chave carrega
+ * sessão + exercício para nunca restaurar em cima do exercício errado.
+ */
+export function saveSetDraft(sessionId: string, sessionExerciseId: string, draft: SetDraft): void {
+  write(SET_DRAFT_KEY, { sessionId, sessionExerciseId, ...draft });
+}
+
+export function loadSetDraft(sessionId: string, sessionExerciseId: string): SetDraft | null {
+  const s = read(SET_DRAFT_KEY);
+  if (!s || typeof s !== "object") return null;
+  if (s.sessionId !== sessionId || s.sessionExerciseId !== sessionExerciseId) return null;
+  if (typeof s.weight !== "number" || typeof s.reps !== "number") return null;
+  return {
+    weight: s.weight,
+    reps: s.reps,
+    rir: typeof s.rir === "number" ? s.rir : null,
+    isWarmup: s.isWarmup === true,
+    isFailure: s.isFailure === true,
+  };
+}
+
+export function clearSetDraft(): void {
+  drop(SET_DRAFT_KEY);
+}
+
+// ────────────────────────────────────────────────────────────────
 // Treino em andamento — para reabrir o app já dentro dele
 // ────────────────────────────────────────────────────────────────
 
@@ -136,4 +183,5 @@ export function clearSessionState(): void {
   clearRest();
   clearActiveIdx();
   clearActiveSession();
+  clearSetDraft();
 }

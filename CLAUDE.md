@@ -29,16 +29,23 @@ O app é usado como PWA no iPhone, na academia, com música tocando em outro app
 e o iOS mata o PWA a cada troca de app. Isso torna o cold start o caminho mais
 percorrido do app, não o mais raro.
 
-Duas regras que caem daí:
+Três regras que caem daí:
 
 1. **Leitura é cache-first.** Telas carregam em duas passadas: `localOnly: true`
    pinta do IndexedDB em milissegundos, depois a mesma função roda contra o
    servidor sem spinner. Use `makeReaders(localOnly)` de `lib/offline-reads.ts`
    em telas com muitas leituras. Rede-primeiro na primeira pintura = segundos de
    spinner com sinal ruim de academia.
-2. **O caminho crítico do treino não espera o servidor.** `offlineInsert(...,
+2. **O caminho crítico do treino não espera o servidor.** `offlineInsert/Update(...,
    { optimistic: true })` grava local, devolve na hora e manda pela fila. O
-   descanso começa antes de qualquer `await`.
+   descanso começa antes de qualquer `await`. Vale para salvar série, adicionar
+   exercício, finalizar exercício e finalizar treino.
+3. **`navigator.onLine` não significa "tem internet".** No 4G ruim ele é `true`
+   e o fetch fica pendurado até o timeout do sistema. Leitura e escrita têm teto
+   de 6 s (`NETWORK_TIMEOUT_MS`); estourar o teto vai pra fila, não pra tela de
+   erro. Nunca chame `supabase.from(...)` direto numa tela — sempre por
+   `offline-reads`/`offline-writes`, senão o recurso simplesmente não funciona
+   sem sinal.
 
 ## Configuração de ambiente
 

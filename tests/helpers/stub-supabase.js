@@ -10,6 +10,13 @@ const estado = {
   sessaoValida: true,
   /** erro a devolver mesmo online — para testar recusa do servidor */
   erroForcado: null,
+  /**
+   * Query que nunca resolve — o 4G ruim da academia.
+   *
+   * `navigator.onLine` fica `true` e o fetch fica pendurado; é o cenário em que
+   * escrita sem teto de tempo travava a tela por dezenas de segundos.
+   */
+  travando: false,
   /** tudo que o "servidor" gravou, em ordem */
   recebidos: [],
 };
@@ -26,6 +33,7 @@ function reset() {
   estado.online = true;
   estado.sessaoValida = true;
   estado.erroForcado = null;
+  estado.travando = false;
   estado.recebidos.length = 0;
 }
 
@@ -34,6 +42,7 @@ function query(table, op) {
     _rows: null,
     _match: {},
     insert(rows) { q._rows = rows; return q; },
+    upsert(rows) { q._rows = rows; return q; },
     update(patch) { q._rows = patch; return q; },
     delete() { return q; },
     select() { return q; },
@@ -47,6 +56,7 @@ function query(table, op) {
     in() { return q; },
     filter() { return q; },
     then(resolve) {
+      if (estado.travando) return; // pendura para sempre
       if (!estado.online) return resolve({ data: null, error: ERRO_REDE });
       if (estado.erroForcado) return resolve({ data: null, error: estado.erroForcado });
       estado.recebidos.push({ table, op, payload: q._rows, match: q._match });
@@ -60,6 +70,7 @@ const supabase = {
   from(table) {
     return {
       insert: (rows) => query(table, "insert").insert(rows),
+      upsert: (rows) => query(table, "upsert").upsert(rows),
       update: (patch) => query(table, "update").update(patch),
       delete: () => query(table, "delete").delete(),
       select: () => query(table, "select").select(),

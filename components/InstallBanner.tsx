@@ -86,7 +86,8 @@ export function InstallBanner() {
       <div
         className="fixed left-3 right-3 z-30 rounded-2xl p-4 scale-in"
         style={{
-          bottom: "calc(72px + env(safe-area-inset-bottom))",
+          // Geometria do rodapé centralizada em globals.css (--nav-total).
+          bottom: "calc(var(--nav-total) + var(--save-bar-h) + 14px)",
           background: "var(--background)",
           border: "0.5px solid var(--border-strong)",
           boxShadow: "0 8px 32px rgba(0,0,0,0.4)",
@@ -136,7 +137,8 @@ export function InstallBanner() {
       <div
         className="fixed left-3 right-3 z-30 rounded-2xl p-4 scale-in"
         style={{
-          bottom: "calc(72px + env(safe-area-inset-bottom))",
+          // Geometria do rodapé centralizada em globals.css (--nav-total).
+          bottom: "calc(var(--nav-total) + var(--save-bar-h) + 14px)",
           background: "var(--background)",
           border: "0.5px solid var(--border-strong)",
           boxShadow: "0 8px 32px rgba(0,0,0,0.4)",

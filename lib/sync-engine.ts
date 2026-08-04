@@ -141,7 +141,12 @@ export async function flushQueue(): Promise<{ flushed: number; failed: number }>
       try {
         const table = supabase.from(m.table);
         if (m.op === "insert") {
-          const { error } = await table.insert(m.payload as any);
+          // `upsert`, não `insert`: a mutação pode já ter chegado ao servidor.
+          // Uma escrita que estourou o teto de tempo (4G ruim) foi enfileirada,
+          // mas o fetch original continuou correndo e pode ter gravado. Como o
+          // payload sempre carrega o `id`, o insert repetido tomaria 23505 e
+          // queimaria as MAX_RETRIES até a linha ser descartada da fila.
+          const { error } = await table.upsert(m.payload as any);
           if (error) throw error;
         } else if (m.op === "update") {
           let q = table.update(m.payload as any);

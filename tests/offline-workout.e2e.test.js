@@ -136,7 +136,11 @@ test("com o token renovado, sincroniza tudo sem perder nada", async () => {
   assert.ok(sets.every((x) => x.payload.session_id === sessao.id), "séries órfãs");
   assert.deepEqual(sets.map((x) => x.payload.weight_kg).sort((a, b) => a - b), [80, 82.5, 85]);
 
-  const criacaoDaSessao = enviados.find((x) => x.table === "workout_sessions" && x.op === "insert");
+  // A fila manda criação como upsert (ver sync-engine): reenviar uma mutação
+  // que já chegou ao servidor não pode virar 23505.
+  const criacaoDaSessao = enviados.find(
+    (x) => x.table === "workout_sessions" && (x.op === "insert" || x.op === "upsert")
+  );
   assert.equal(criacaoDaSessao.payload.user_id, "user-1");
 });
 

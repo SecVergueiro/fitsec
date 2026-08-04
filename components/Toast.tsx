@@ -83,10 +83,11 @@ export function ToastProvider({ children }: { children: ReactNode }) {
     <ToastContext.Provider value={contextValue}>
       {children}
 
-      {/* Toast stack — above BottomNav */}
+      {/* Toast stack — acima da nav e da barra de salvar série, senão o
+          "Série salva" cobria justamente o botão que você acabou de tocar. */}
       <div
         className="fixed left-0 right-0 z-50 flex flex-col gap-2 items-center pointer-events-none"
-        style={{ bottom: "88px", padding: "0 20px" }}
+        style={{ bottom: "calc(var(--nav-total) + var(--save-bar-h) + 14px)", padding: "0 20px" }}
       >
         {toasts.map((t) => (
           <ToastBubble

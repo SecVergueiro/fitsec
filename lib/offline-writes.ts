@@ -7,8 +7,44 @@ import { supabase } from "./supabase";
 import { db } from "./offline-db";
 import { enqueue, flushQueue } from "./sync-engine";
 
+/**
+ * Teto de tempo da tentativa online, igual ao de `offline-reads`.
+ *
+ * `navigator.onLine` só diz que existe uma interface de rede — no 4G ruim da
+ * academia ele é `true` e o fetch fica pendurado até o timeout do sistema
+ * (dezenas de segundos no iOS). Sem teto aqui, "adicionar exercício" e
+ * "finalizar exercício" travavam a UI todo esse tempo e pareciam não funcionar
+ * sem internet — quando o que faltava era desistir da rede e ir pra fila.
+ */
+const NETWORK_TIMEOUT_MS = 6000;
+
 function isOnline(): boolean {
   return typeof navigator === "undefined" || navigator.onLine;
+}
+
+/** Erro sintético de timeout — `status: 0` faz `isRetriable` mandar pra fila. */
+const TIMEOUT_ERROR = { message: "AbortError: network timeout", status: 0 };
+
+/**
+ * Roda a query com teto de tempo, no formato `{ data, error }` do supabase-js.
+ *
+ * Estourar o teto não é falha definitiva: devolve um erro retriable para o
+ * chamador enfileirar a mutação e devolver o controle pra tela.
+ */
+async function withTimeout<T extends { error?: unknown }>(
+  query: PromiseLike<T>
+): Promise<T | { data: null; error: typeof TIMEOUT_ERROR }> {
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  try {
+    return await Promise.race([
+      Promise.resolve(query),
+      new Promise<{ data: null; error: typeof TIMEOUT_ERROR }>((resolve) => {
+        timer = setTimeout(() => resolve({ data: null, error: TIMEOUT_ERROR }), NETWORK_TIMEOUT_MS);
+      }),
+    ]);
+  } finally {
+    if (timer) clearTimeout(timer);
+  }
 }
 
 export type WriteOp = "insert" | "update" | "delete";
@@ -145,7 +181,9 @@ export async function offlineInsert<T extends Record<string, any>>(
   }
 
   if (isOnline()) {
-    const { data, error } = await supabase.from(table).insert(recordWithId as any).select().single();
+    const { data, error } = await withTimeout(
+      supabase.from(table).insert(recordWithId as any).select().single()
+    );
     if (!error) {
       // Substitui o registro local pelo retornado do servidor (caso o servidor enriqueça campos)
       if (db && options.localTable && data) {
@@ -175,7 +213,12 @@ export async function offlineUpdate(
   table: string,
   patch: Record<string, any>,
   match: Record<string, any>,
-  options: { localTable?: keyof NonNullable<typeof db>; localId?: string } = {}
+  options: {
+    localTable?: keyof NonNullable<typeof db>;
+    localId?: string;
+    /** Mesma ideia do insert otimista: grava local, enfileira e volta na hora. */
+    optimistic?: boolean;
+  } = {}
 ): Promise<void> {
   // Atualiza local imediatamente
   if (db && options.localTable && options.localId) {
@@ -187,10 +230,15 @@ export async function offlineUpdate(
     } catch {/* */}
   }
 
+  if (options.optimistic) {
+    await enqueue(table, "update", patch, match);
+    return;
+  }
+
   if (isOnline()) {
     let q = supabase.from(table).update(patch);
     Object.entries(match).forEach(([k, v]) => { q = q.eq(k, v); });
-    const { error } = await q;
+    const { error } = await withTimeout(q);
     if (!error) return;
     if (!isRetriable(error)) throw new ServerRejectedError(table, "update", error);
   }
@@ -213,7 +261,7 @@ export async function offlineDelete(
   if (isOnline()) {
     let q = supabase.from(table).delete();
     Object.entries(match).forEach(([k, v]) => { q = q.eq(k, v); });
-    const { error } = await q;
+    const { error } = await withTimeout(q);
     if (!error) return;
     if (!isRetriable(error)) throw new ServerRejectedError(table, "delete", error);
   }

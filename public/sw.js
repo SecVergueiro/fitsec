@@ -4,7 +4,7 @@
 //
 // NÃO edite public/sw.js — edite este arquivo.
 
-const VERSION = "rkW7Gxnirt_fevDJbEsts";
+const VERSION = "hKQhg2fCbf1ScSMg8J78c";
 const CACHE = "fitsec-" + VERSION;
 
 // Chunks JS/CSS do build (nomes com hash → imutáveis).
@@ -13,10 +13,10 @@ const CACHE = "fitsec-" + VERSION;
 const PRECACHE_ASSETS = [
   "/_next/static/chunks/101-9698c410db234899.js",
   "/_next/static/chunks/117-7bf0dad226a9fc21.js",
-  "/_next/static/chunks/378-2b6b23f59f5c5fea.js",
-  "/_next/static/chunks/394-287386224313d82e.js",
+  "/_next/static/chunks/378-16023ed12b5e3ab5.js",
+  "/_next/static/chunks/394-748dad96370d08bb.js",
   "/_next/static/chunks/44530001-9b9daae6bcc8e13c.js",
-  "/_next/static/chunks/492-546f5bc2cacc6795.js",
+  "/_next/static/chunks/492-973e37c70f01e2a3.js",
   "/_next/static/chunks/533-bef2450918730dd5.js",
   "/_next/static/chunks/601-d63898c72d21787c.js",
   "/_next/static/chunks/648-33438c3959560a82.js",
@@ -26,29 +26,29 @@ const PRECACHE_ASSETS = [
   "/_next/static/chunks/966-ec1d7f512174d718.js",
   "/_next/static/chunks/app/_not-found/page-0c9aa90fe6aaf72b.js",
   "/_next/static/chunks/app/biblioteca/page-7c721bd626aa8eee.js",
-  "/_next/static/chunks/app/historico/page-3663445f6acaa1d8.js",
-  "/_next/static/chunks/app/layout-8ad4d4e61ee486eb.js",
+  "/_next/static/chunks/app/historico/page-82a87d2cab395d79.js",
+  "/_next/static/chunks/app/layout-480e25e87b004943.js",
   "/_next/static/chunks/app/login/page-ce15919e9da941c8.js",
-  "/_next/static/chunks/app/page-0db2208f503fd578.js",
-  "/_next/static/chunks/app/perfil/page-e178f97864f43eba.js",
+  "/_next/static/chunks/app/page-144fe677f77485be.js",
+  "/_next/static/chunks/app/perfil/page-2077ef276e8bdc5e.js",
   "/_next/static/chunks/app/public/sessao/[id]/page-e67ce0a53feb40b6.js",
   "/_next/static/chunks/app/sessao/[id]/page-c642186aaba38c1b.js",
   "/_next/static/chunks/app/sessao/[id]/resumo/page-562c434320b15a3d.js",
-  "/_next/static/chunks/app/sessao/ativa/page-a2183de16d0f7f72.js",
-  "/_next/static/chunks/app/sessao/page-ffedd8d4f3ab6acf.js",
-  "/_next/static/chunks/app/sessao/rapido/page-7dfdfba2c6bc799c.js",
-  "/_next/static/chunks/app/sessao/resumo/page-818abadd5e6e72bd.js",
+  "/_next/static/chunks/app/sessao/ativa/page-637dc5bcf2f76fdf.js",
+  "/_next/static/chunks/app/sessao/page-3605439eee4fde7c.js",
+  "/_next/static/chunks/app/sessao/rapido/page-692fd2aaab4b7611.js",
+  "/_next/static/chunks/app/sessao/resumo/page-1029a032ac070347.js",
   "/_next/static/chunks/app/stats/[exerciseId]/page-d9123514d92eff06.js",
   "/_next/static/chunks/app/stats/exercicio/page-d4e9c4b7afd3dbab.js",
   "/_next/static/chunks/app/stats/page-e375c718fe981ce6.js",
-  "/_next/static/chunks/app/treinos/dia/page-f03cbb8d3817828a.js",
+  "/_next/static/chunks/app/treinos/dia/page-aed06883ed71b4e7.js",
   "/_next/static/chunks/app/treinos/mesociclo/novo/page-27be27c400bfd5f4.js",
-  "/_next/static/chunks/app/treinos/mesociclo/page-752dc51d1bfacdba.js",
+  "/_next/static/chunks/app/treinos/mesociclo/page-60ad8b4e12983fc3.js",
   "/_next/static/chunks/app/treinos/novo/page-13cd0a5ad21f2ec2.js",
   "/_next/static/chunks/app/treinos/page-21677b6b93ba443a.js",
   "/_next/static/chunks/app/treinos/template/[id]/dia/[dayId]/page-77d8c1e580961f6f.js",
   "/_next/static/chunks/app/treinos/template/[id]/page-fab421b684cb777c.js",
-  "/_next/static/chunks/app/treinos/template/page-ef98493683706407.js",
+  "/_next/static/chunks/app/treinos/template/page-757d513975b33c14.js",
   "/_next/static/chunks/fd9d1056-090e7b7a3a7d88a0.js",
   "/_next/static/chunks/framework-00a8ba1a63cfdc9e.js",
   "/_next/static/chunks/main-97be3bf400660a4e.js",
@@ -57,9 +57,9 @@ const PRECACHE_ASSETS = [
   "/_next/static/chunks/pages/_error-2f37a8b74d52c0a0.js",
   "/_next/static/chunks/polyfills-42372ed130431b0a.js",
   "/_next/static/chunks/webpack-36a1d514310b5a92.js",
-  "/_next/static/css/3a4d8395847dd8fb.css",
-  "/_next/static/rkW7Gxnirt_fevDJbEsts/_buildManifest.js",
-  "/_next/static/rkW7Gxnirt_fevDJbEsts/_ssgManifest.js"
+  "/_next/static/css/6b51c7ec7fe6a230.css",
+  "/_next/static/hKQhg2fCbf1ScSMg8J78c/_buildManifest.js",
+  "/_next/static/hKQhg2fCbf1ScSMg8J78c/_ssgManifest.js"
 ];
 
 // HTML das rotas estáticas + arquivos de public/ (manifest, ícones, offline.html)

@@ -19,6 +19,20 @@
   --border-strong: rgba(152, 181, 210, 0.25);
   --muted: rgba(237, 238, 239, 0.55);
   --faint: rgba(237, 238, 239, 0.3);
+
+  /* ── Geometria do rodapé ──────────────────────────────────────
+     Três coisas moram fixas no rodapé: a BottomNav, os toasts e a barra de
+     salvar série. Cada uma calculava a própria altura no olho — a barra ficou
+     por baixo da nav no iPhone justamente por isso. Aqui é a fonte única.
+
+     --nav-h      altura útil da nav (a nav é forçada nessa altura)
+     --nav-total  nav + safe area do iPhone
+     --save-bar-h 56 enquanto a barra de salvar existe, 0 fora do treino;
+                  quem liga/desliga é o ExerciseCard. O padding da página e a
+                  pilha de toasts somam isso, então nada fica embaixo dela. */
+  --nav-h: 58px;
+  --nav-total: calc(var(--nav-h) + env(safe-area-inset-bottom, 0px));
+  --save-bar-h: 0px;
 }
 
 * {

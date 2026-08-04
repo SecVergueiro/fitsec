@@ -139,6 +139,52 @@ test("otimista · erro do servidor não estoura no caminho crítico", async () =
   assert.equal(enfileirados.length, 1);
 });
 
+// ── 4G ruim: online pelo navigator, mas o fetch fica pendurado ───
+//
+// É o cenário real da academia — e o que fazia "adicionar exercício" e
+// "finalizar exercício" parecerem quebrados sem internet. `navigator.onLine`
+// é true, então o código tentava a rede; sem teto de tempo o await segurava a
+// tela até o timeout do sistema (dezenas de segundos no iOS).
+
+test("insert · query pendurada desiste no teto de tempo e vai pra fila", async () => {
+  servidor.estado.travando = true;
+  const t = Date.now();
+
+  const r = await offlineInsert("exercises", { name: "Remada" }, { localTable: "exercises" });
+
+  assert.ok(r.id, "devolve o registro em vez de travar a tela");
+  assert.equal(enfileirados.length, 1, "a mutação não pode se perder no caminho");
+  assert.equal(localTable.size, 1, "e continua no cache local");
+  assert.ok(Date.now() - t < 15_000, "não esperou o timeout do sistema");
+});
+
+test("update · query pendurada desiste no teto de tempo e vai pra fila", async () => {
+  servidor.estado.travando = true;
+  await offlineUpdate("session_exercises", { is_completed: true }, { id: "ex-1" });
+  assert.equal(enfileirados.length, 1);
+});
+
+test("delete · query pendurada desiste no teto de tempo e vai pra fila", async () => {
+  servidor.estado.travando = true;
+  await offlineDelete("session_sets", { id: "s-1" });
+  assert.equal(enfileirados.length, 1);
+});
+
+// ── update otimista (finalizar exercício) ────────────────────────
+
+test("update otimista não toca na rede e volta na hora", async () => {
+  servidor.estado.travando = true;
+  await offlineUpdate(
+    "session_exercises",
+    { is_completed: true },
+    { id: "ex-1" },
+    { optimistic: true }
+  );
+  assert.equal(enfileirados.length, 1);
+  assert.equal(enfileirados[0].op, "update");
+  assert.deepEqual(enfileirados[0].match, { id: "ex-1" });
+});
+
 test("update segue a mesma política", async () => {
   servidor.estado.erroForcado = REDE;
   await offlineUpdate("exercises", { name: "x" }, { id: "1" });

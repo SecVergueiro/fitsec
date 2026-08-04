@@ -4,6 +4,7 @@ import { useEffect, useState } from "react";
 import { supabase } from "@/lib/supabase";
 import { offlineInsert } from "@/lib/offline-writes";
 import { offlineReadList } from "@/lib/offline-reads";
+import { pendingCount } from "@/lib/sync-engine";
 import { db as offlineDB } from "@/lib/offline-db";
 import { Input, Button } from "@/components/Button";
 import { ExerciseItem } from "@/components/ExerciseItem";
@@ -33,12 +34,24 @@ export function AddExerciseToSessionModal({
   const [adding, setAdding] = useState(false);
   const [showNewExercise, setShowNewExercise] = useState(false);
 
+  // Duas passadas, como as telas de leitura: o cache pinta a lista na hora e a
+  // rede revalida sem travar. Rede-primeiro custava até 6 s de modal vazio com
+  // sinal ruim — e é exatamente onde o exercício criado offline ainda não existe.
   async function loadExercises() {
-    const data = await offlineReadList<Exercise>(
-      () => supabase.from("exercises").select("*").order("name"),
-      async () => (offlineDB ? offlineDB.exercises.orderBy("name").toArray() : null)
-    );
-    setExercises(data);
+    // Com mutações na fila o servidor ainda não conhece o exercício criado
+    // offline e a resposta dele apagaria da lista o que acabou de ser criado.
+    const preferLocal = (await pendingCount()) > 0;
+    const read = (localOnly: boolean) =>
+      offlineReadList<Exercise>(
+        () => supabase.from("exercises").select("*").order("name"),
+        async () => (offlineDB ? offlineDB.exercises.orderBy("name").toArray() : null),
+        { localOnly, preferLocal }
+      );
+
+    const local = await read(true);
+    if (local.length > 0) setExercises(local);
+    const fresh = await read(false);
+    if (fresh.length > 0) setExercises(fresh);
   }
 
   useEffect(() => {
@@ -68,7 +81,11 @@ export function AddExerciseToSessionModal({
         rest_seconds: 90,
         is_completed: false,
       },
-      { localTable: "session_exercises" }
+      // Otimista: grava local, enfileira e volta na hora. Esperar o servidor
+      // deixava a lista em opacity 0.5 durante todo o fetch — no 4G ruim da
+      // academia isso passava de meio minuto e parecia que não dava pra
+      // adicionar exercício sem internet.
+      { localTable: "session_exercises", optimistic: true }
     );
     setAdding(false);
     onAdded();
@@ -200,15 +217,14 @@ export function AddExerciseToSessionModal({
         <NewExerciseModal
           existingExercises={exercises.filter((e) => !e.parent_exercise_id)}
           onClose={() => setShowNewExercise(false)}
-          onCreated={async () => {
+          // O exercício criado vem no callback. Antes buscávamos "o mais
+          // recente" no servidor para descobrir qual era — offline essa query
+          // volta vazia e o exercício nunca entrava no treino, mesmo tendo sido
+          // criado e enfileirado com sucesso.
+          onCreated={async (created) => {
             setShowNewExercise(false);
-            // Recarrega lista e pega o mais recente (acabou de criar)
-            const { data } = await supabase
-              .from("exercises").select("*").order("created_at", { ascending: false }).limit(1).maybeSingle();
-            await loadExercises();
-            if (data) {
-              await add(data as Exercise);
-            }
+            setExercises((prev) => [...prev, created]);
+            await add(created);
           }}
         />
       )}

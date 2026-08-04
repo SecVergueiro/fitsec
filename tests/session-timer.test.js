@@ -74,15 +74,46 @@ test("marca de treino corrompida não redireciona pra lugar nenhum", () => {
   assert.equal(st.loadActiveSession(60_000), null);
 });
 
+// ── série em preparo ────────────────────────────────────────────
+//
+// O aquecimento sumia por isso: o toggle e a carga leve viviam só em useState.
+// Você toca em "40%", troca pro app de música, o iOS mata o PWA — e ao voltar o
+// form estava de novo no peso de trabalho, com o aquecimento desligado.
+
+const EX = "aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa";
+
+test("aquecimento em preparo sobrevive ao app morrer", () => {
+  st.saveSetDraft(SESSAO, EX, { weight: 40, reps: 8, rir: null, isWarmup: true, isFailure: false });
+
+  const voltou = st.loadSetDraft(SESSAO, EX);
+  assert.ok(voltou);
+  assert.equal(voltou.isWarmup, true, "o toggle de aquecimento é o que mais sumia");
+  assert.equal(voltou.weight, 40);
+  assert.equal(voltou.reps, 8);
+});
+
+test("rascunho não vaza para outro exercício nem para outra sessão", () => {
+  st.saveSetDraft(SESSAO, EX, { weight: 40, reps: 8, rir: 2, isWarmup: true, isFailure: false });
+  assert.equal(st.loadSetDraft(SESSAO, "outro-exercicio"), null);
+  assert.equal(st.loadSetDraft(OUTRA, EX), null);
+});
+
+test("rascunho corrompido não quebra o form", () => {
+  window.localStorage.setItem("fitsec_set_draft_v1", '{"sessionId":"' + SESSAO + '","sessionExerciseId":"' + EX + '"}');
+  assert.equal(st.loadSetDraft(SESSAO, EX), null, "sem peso/reps não dá para restaurar");
+});
+
 test("finalizar o treino não deixa lixo para o próximo", () => {
   const agora = 1_700_000_000_000;
   st.saveRest({ sessionId: SESSAO, endAt: agora + 90_000, total: 90 });
   st.saveActiveIdx(SESSAO, 2);
   st.saveActiveSession(SESSAO, 1_700_000_000_000);
+  st.saveSetDraft(SESSAO, EX, { weight: 80, reps: 8, rir: 2, isWarmup: false, isFailure: false });
   st.clearSessionState();
   assert.equal(st.loadActiveSession(60_000, 1_700_000_000_000), null, "não retoma um treino já encerrado");
   assert.equal(st.loadRest(SESSAO, agora), null);
   assert.equal(st.loadActiveIdx(SESSAO), null);
+  assert.equal(st.loadSetDraft(SESSAO, EX), null, "série em preparo não vaza pro treino seguinte");
 });
 
 test("localStorage corrompido ou bloqueado não quebra a sessão", () => {

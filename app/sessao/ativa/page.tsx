@@ -14,7 +14,7 @@ import { offlineRead, offlineReadList } from "@/lib/offline-reads";
 import { pendingCount } from "@/lib/sync-engine";
 import { db as offlineDB } from "@/lib/offline-db";
 import { armRestAlert, playRestAlert, acquireWakeLock, releaseWakeLock, hasWakeLock } from "@/lib/rest-alert";
-import { saveRest, loadRest, clearRest, saveActiveIdx, loadActiveIdx, saveActiveSession, clearSessionState } from "@/lib/session-timer";
+import { saveRest, loadRest, clearRest, saveActiveIdx, loadActiveIdx, saveActiveSession, clearActiveSession, clearSessionState, saveSetDraft, loadSetDraft } from "@/lib/session-timer";
 import { startIosTimer, isIosTimerEnabled } from "@/lib/ios-timer";
 import { useProfile } from "@/components/ProfileProvider";
 import type { Exercise, SessionExercise, SessionSet, WorkoutSession } from "@/lib/database.types";
@@ -190,6 +190,19 @@ function SessaoAtivaPage() {
     // Sessão inexistente no cache: não zera a tela, deixa a passada de rede decidir.
     if (!sessionData && localOnly) return false;
 
+    // Marca de "treino em andamento" — é ela que faz o app reabrir direto aqui.
+    // Só vale enquanto o treino está realmente aberto: se foi finalizado (pode
+    // ter sido em outro device) ou se o servidor confirma que não existe mais, a
+    // marca precisa sair. Senão todo cold start das próximas 4 h cairia num
+    // treino encerrado ou numa tela vazia.
+    if (sessionData?.completed_at) {
+      clearActiveSession();
+    } else if (sessionData) {
+      saveActiveSession(sessionData.id, new Date(sessionData.started_at).getTime());
+    } else if (!localOnly) {
+      clearActiveSession();
+    }
+
     // Se uma série entrou na fila enquanto a rede respondia, o que o servidor
     // mandou já está velho — aplicar apagaria da tela a série recém-salva e o
     // usuário registraria de novo. `preferLocal` já cobre o caso em que a fila
@@ -199,12 +212,6 @@ function SessaoAtivaPage() {
     }
 
     setSession(sessionData);
-
-    // Mantém a marca de "treino em andamento" fresca — é o que faz o app
-    // reabrir direto aqui depois de o iOS matá-lo.
-    if (sessionData && !sessionData.completed_at) {
-      saveActiveSession(sessionData.id, new Date(sessionData.started_at).getTime());
-    }
 
     if (mesoData) {
       const start = new Date(mesoData.start_date);
@@ -361,10 +368,16 @@ function SessaoAtivaPage() {
 
     // Descanso PRIMEIRO, antes de qualquer await. Você solta a barra e o
     // relógio já está correndo — era o que o timer do iPhone fazia melhor.
-    if (!isWarmup) {
+    //
+    // Aquecimento também descansa, só menos: antes o timer simplesmente não
+    // começava depois de uma série de aquecimento, então o tempo entre elas não
+    // era contado por nada e você ficava olhando o relógio da parede.
+    {
       const savedRest = typeof window !== "undefined" ? localStorage.getItem(`rest_${ex.exercise_id}`) : null;
       const restSecs = savedRest ? parseInt(savedRest) : (ex.rest_seconds ?? 0);
-      if (restSecs > 0) startRestTimer(restSecs);
+      if (restSecs > 0) {
+        startRestTimer(isWarmup ? Math.max(30, Math.round(restSecs / 2)) : restSecs);
+      }
     }
 
     let data: SessionSet;
@@ -485,10 +498,13 @@ function SessaoAtivaPage() {
     }, 4500);
   }
 
-  async function toggleCompleted(exIdx: number) {
+  function toggleCompleted(exIdx: number) {
     const ex = exercises[exIdx];
     const newVal = !ex.is_completed;
-    await offlineUpdate("session_exercises", { is_completed: newVal }, { id: ex.id }, { localTable: "session_exercises", localId: ex.id });
+
+    // UI primeiro, rede pela fila. Terminar o exercício é caminho crítico do
+    // treino: com 4G ruim o `await` do update segurava o check por dezenas de
+    // segundos e parecia que sem internet não dava pra finalizar exercício.
     setExercises((prev) => {
       const next = [...prev];
       next[exIdx] = { ...next[exIdx], is_completed: newVal };
@@ -497,6 +513,13 @@ function SessaoAtivaPage() {
     if (newVal && exIdx < exercises.length - 1) {
       setActiveIdx(exIdx + 1);
     }
+
+    void offlineUpdate(
+      "session_exercises",
+      { is_completed: newVal },
+      { id: ex.id },
+      { localTable: "session_exercises", localId: ex.id, optimistic: true }
+    );
   }
 
   // Destrava o áudio no primeiro toque da tela. Tem que ser dentro de um gesto
@@ -624,7 +647,9 @@ function SessaoAtivaPage() {
         bodyweight_kg: bodyweightKg,
       },
       { id: sessionId },
-      { localTable: "workout_sessions", localId: sessionId }
+      // Otimista pelo mesmo motivo do check de exercício: encerrar o treino não
+      // pode ficar preso num fetch de 4G ruim. O resumo lê o cache local.
+      { localTable: "workout_sessions", localId: sessionId, optimistic: true }
     );
     if ("vibrate" in navigator) navigator.vibrate([100, 50, 100, 50, 300]);
     clearSessionState();
@@ -1059,23 +1084,32 @@ function ExerciseCard({
   dragHandle?: import("@/components/SortableList").DragHandleProps;
 }) {
   const toast = useToast();
+
+  // Série em preparo que sobreviveu a um restart do iOS: peso, reps, RIR e —
+  // o que mais incomodava — o toggle de aquecimento ligado. Inicializador lazy:
+  // ler localStorage a cada render sairia caro (o cronômetro re-renderiza a
+  // lista de exercícios a cada segundo).
+  const [draft] = useState(() => loadSetDraft(exercise.session_id, exercise.id));
+
   const [weightNum, setWeightNum] = useState<number>(() => {
+    if (draft) return draft.weight;
     const lastSet = [...exercise.sets].reverse().find((s) => !s.is_warmup);
     if (lastSet) return lastSet.weight_kg;
     if (exercise.prevBest) return exercise.prevBest.weight;
     return 0;
   });
   const [repsNum, setRepsNum] = useState<number>(() => {
+    if (draft) return draft.reps;
     const lastSet = [...exercise.sets].reverse().find((s) => !s.is_warmup);
     if (lastSet) return lastSet.reps;
     if (exercise.prevBest) return exercise.prevBest.reps;
     return exercise.rep_range_min ?? 8;
   });
-  const [rirNum, setRirNum] = useState<number | null>(null);
-  const [showRir, setShowRir] = useState(false);
+  const [rirNum, setRirNum] = useState<number | null>(draft?.rir ?? null);
+  const [showRir, setShowRir] = useState(draft?.rir != null);
   const [showRirInfo, setShowRirInfo] = useState(false);
-  const [isWarmup, setIsWarmup] = useState(false);
-  const [isFailure, setIsFailure] = useState(false);
+  const [isWarmup, setIsWarmup] = useState(draft?.isWarmup ?? false);
+  const [isFailure, setIsFailure] = useState(draft?.isFailure ?? false);
   const [saving, setSaving] = useState(false);
   const [weightEditing, setWeightEditing] = useState(false);
   const [notes, setNotes] = useState(exercise.notes ?? "");
@@ -1084,6 +1118,18 @@ function ExerciseCard({
   // O SaveBar vai por portal — só existe depois da hidratação.
   const [mounted, setMounted] = useState(false);
   useEffect(() => setMounted(true), []);
+
+  const showSaveBar = isActive && !isCompleted && !isReadOnly;
+  const lastSaveRef = useRef(0);
+
+  // Publica a altura da barra pro resto do layout: o padding da página e a
+  // pilha de toasts somam --save-bar-h para não ficarem embaixo dela.
+  useEffect(() => {
+    if (!showSaveBar || typeof document === "undefined") return;
+    const root = document.documentElement;
+    root.style.setProperty("--save-bar-h", `${SAVE_BAR_HEIGHT}px`);
+    return () => root.style.setProperty("--save-bar-h", "0px");
+  }, [showSaveBar]);
   const notesTimerRef = useRef<NodeJS.Timeout | null>(null);
 
   // Prescrição editável localmente
@@ -1155,7 +1201,15 @@ function ExerciseCard({
     return { kg: base, tip: `RIR médio ${avgRIR.toFixed(1)} → manter carga` };
   })();
 
+  // Autofill com a última série. Roda de novo a cada série salva, mas não pode
+  // rodar na montagem quando havia rascunho — era ele que trazia o aquecimento
+  // de volta, e o autofill o sobrescreveria com o peso de trabalho.
+  const skipAutofillRef = useRef(draft != null);
   useEffect(() => {
+    if (skipAutofillRef.current) {
+      skipAutofillRef.current = false;
+      return;
+    }
     const lastSet = [...exercise.sets].reverse().find((s) => !s.is_warmup);
     if (lastSet) {
       setWeightNum(lastSet.weight_kg);
@@ -1168,11 +1222,33 @@ function ExerciseCard({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [exercise.sets.length]);
 
+  // Espelha o form no localStorage a cada toque. Só o exercício aberto escreve:
+  // o rascunho é um slot único e um card inativo apagaria o do card ativo.
+  useEffect(() => {
+    if (!showSaveBar) return;
+    saveSetDraft(exercise.session_id, exercise.id, {
+      weight: weightNum,
+      reps: repsNum,
+      rir: rirNum,
+      isWarmup,
+      isFailure,
+    });
+  }, [showSaveBar, exercise.session_id, exercise.id, weightNum, repsNum, rirNum, isWarmup, isFailure]);
+
   async function handleSave() {
     if (weightNum <= 0 || repsNum <= 0) {
       toast.error("Informe peso e reps válidos");
       return;
     }
+
+    // Trava contra duplo toque. Antes o `saving` cobria isso sozinho porque o
+    // insert esperava o servidor; agora ele grava local e volta em milissegundos,
+    // então dois toques no mesmo movimento do dedo virariam duas séries iguais.
+    // Ninguém registra duas séries de verdade em 500 ms.
+    const now = Date.now();
+    if (now - lastSaveRef.current < 500) return;
+    lastSaveRef.current = now;
+
     setSaving(true);
     const success = await onAddSet(weightNum, repsNum, rirNum, isWarmup, isFailure);
     if (success) {
@@ -1914,8 +1990,6 @@ function ExerciseCard({
             </div>
           )}
 
-          {/* Espaço pro SaveBar fixo não cobrir o fim do form */}
-          <div style={{ height: SAVE_BAR_HEIGHT }} aria-hidden />
         </div>
       )}
 
@@ -1926,16 +2000,18 @@ function ExerciseCard({
           que rolar meia tela pra alcançar o botão. Vai por portal porque o card
           é `overflow-hidden` e vive numa lista sortable com transform — os dois
           quebram position:fixed. */}
-      {mounted && isActive && !isCompleted && !isReadOnly &&
+      {mounted && showSaveBar &&
         createPortal(
           <div
             style={{
               position: "fixed",
-              // Acima da BottomNav (~58px) + respiro.
-              bottom: "calc(env(safe-area-inset-bottom, 0px) + 68px)",
+              // Geometria do rodapé mora em globals.css — ver --nav-total.
+              bottom: "calc(var(--nav-total) + 10px)",
               left: 0,
               right: 0,
-              zIndex: 45,
+              // Acima da nav (z-50): durante uma série o botão de salvar é o
+              // que importa, não as abas. Abaixo dos modais (z-60).
+              zIndex: 55,
               padding: "0 20px",
               pointerEvents: "none",
             }}
@@ -1946,7 +2022,7 @@ function ExerciseCard({
                 disabled={saving || weightNum <= 0 || repsNum <= 0}
                 className="w-full rounded-xl flex items-center justify-center gap-2 font-bold"
                 style={{
-                  height: 56,
+                  height: SAVE_BAR_HEIGHT,
                   background: (saving || weightNum <= 0 || repsNum <= 0) ? "var(--surface-strong)" : "var(--accent)",
                   color: (saving || weightNum <= 0 || repsNum <= 0) ? "var(--muted)" : "var(--background)",
                   letterSpacing: "0.06em",
@@ -1978,7 +2054,7 @@ function ExerciseCard({
   );
 }
 
-/** Altura reservada em fluxo pro SaveBar fixo. */
+/** Altura da barra fixa de salvar série. Publicada em `--save-bar-h`. */
 const SAVE_BAR_HEIGHT = 56;
 
 function calcPlates(targetKg: number): string | null {

@@ -29,7 +29,9 @@ export function BottomNav() {
         paddingBottom: "env(safe-area-inset-bottom)",
       }}
     >
-      <div className="max-w-md mx-auto flex">
+      {/* Altura travada em --nav-h: quem se posiciona acima da nav (barra de
+          salvar, toasts) depende dessa medida ser previsível. */}
+      <div className="max-w-md mx-auto flex" style={{ height: "var(--nav-h)" }}>
         {TABS.map((tab) => {
           const active =
             tab.href === "/"

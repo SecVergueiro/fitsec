@@ -59,7 +59,8 @@ export default function RootLayout({
                   style={{
                     minHeight: "100vh",
                     paddingTop: "calc(env(safe-area-inset-top, 0px) + 20px)",
-                    paddingBottom: "calc(env(safe-area-inset-bottom, 0px) + 96px)",
+                    // Livra a nav e, quando existe, a barra de salvar série.
+                    paddingBottom: "calc(var(--nav-total) + var(--save-bar-h) + 40px)",
                   }}
                 >
                   {children}

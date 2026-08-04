@@ -10,7 +10,14 @@ import type { Exercise, MuscleGroup, Equipment, Category } from "@/lib/database.
 
 interface Props {
   onClose: () => void;
-  onCreated: () => void;
+  /**
+   * Recebe o exercício criado, já com id.
+   *
+   * Quem cria o exercício para usar em seguida (a sessão, ao adicionar um
+   * exercício novo no meio do treino) precisa da linha na mão: procurá-la no
+   * servidor depois não funciona offline, onde ela existe só na fila.
+   */
+  onCreated: (created: Exercise) => void;
   existingExercises: Exercise[];
 }
 
@@ -68,8 +75,9 @@ export function NewExerciseModal({ onClose, onCreated, existingExercises }: Prop
       user_id: userId,
     } as any;
 
+    let created: Exercise;
     try {
-      await offlineInsert("exercises", payload as any, { localTable: "exercises" });
+      created = (await offlineInsert("exercises", payload as any, { localTable: "exercises" })) as Exercise;
     } catch (err: any) {
       // Só chega aqui em recusa definitiva do servidor; falha de rede vai pra fila
       setSaving(false);
@@ -78,7 +86,7 @@ export function NewExerciseModal({ onClose, onCreated, existingExercises }: Prop
     }
 
     setSaving(false);
-    onCreated();
+    onCreated(created);
   }
 
   return (
